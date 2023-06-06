@@ -1,0 +1,38 @@
+{
+  "name": "nodesub",
+  "version": "0.0.6",
+  "description": "Nodesub: A CLI tool for finding subdomains in bug bounty programs",
+  "bin": {
+    "nodesub": "nodesub.js"
+  },
+  "keywords": [
+    "amass",
+    "bug-bounty",
+    "cli",
+    "recon",
+    "subdomain-enumeration",
+    "subdomains"
+  ],
+  "author": "pikpikcu",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^0.24.0",
+    "cheerio": "^1.0.0-rc.10",
+    "chalk": "^4.1.2",
+    "cli-spinner": "^2.6.0",
+    "cloudscraper": "^2.2.1",
+    "commander": "^8.3.0",
+    "csv-writer": "^2.6.0",
+    "dns": "^4.1.4",
+    "fast-glob": "^3.3.6",
+    "figlet": "^1.5.0",
+    "fs": "0.0.1-security",
+    "http-proxy-agent": "^5.0.0",
+    "https-proxy-agent": "^5.0.0",
+    "node-rate-limiter-flexible": "^3.2.0",
+    "pdfkit": "^0.12.0",
+    "socks-proxy-agent": "^5.0.0",
+    "subquest": "^3.0.2",
+    "url": "^0.11.0"
+  }
+}
