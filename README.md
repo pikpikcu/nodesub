@@ -8,7 +8,8 @@ To install Nodesub, use the following command:
 
 `npm install -g nodesub`
 
-
+**NOTE**
+Edit File `~/.config/nodesub/config.ini`
 ## Usage
 
 `nodesub [flags]`
