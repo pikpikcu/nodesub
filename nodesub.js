@@ -37,8 +37,8 @@ const version = '0.0.4';
 const codename = 'pikpikcu';
 
 program
-  .usage('program.js [flags]')
-  .description('Description of your program')
+  .usage('nodesub [flags]')
+  .description('Nodesub is a command-line tool for finding subdomains in bug bounty programs.')
   .option('-u, --url <domain>', 'Main domain')
   .option('-l, --list <file>', 'File with list of domains')
   .option('-rl, --rate-limit <limit>', 'Rate limit for DNS requests (requests per second)', '0')
