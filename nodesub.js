@@ -502,7 +502,7 @@ async function getSubDomains(domain) {
 					'9.9.9.10'					
             ], // array of DNS servers to use
             recursive: false, 
-            dictionary: '/usr/share/wordlists/metasploit/lync_subdomains.txt', 
+            dictionary: 'dictionary.txt', 
         };
 
 		const subdomains = await subquest.getSubDomains(enumoptions);
