@@ -10,6 +10,8 @@ const Spinner = require('cli-spinner').Spinner;
 const figlet = require('figlet');
 const cloudscraper = require('cloudscraper');
 const subquest = require('subquest');
+const { promisify } = require('util');
+
 const {
 	v4: uuidv4
 } = require('uuid');
@@ -33,20 +35,19 @@ const HttpProxyAgent = require('http-proxy-agent');
 const HttpsProxyAgent = require('https-proxy-agent');
 const SocksProxyAgent = require('socks-proxy-agent');
 
-const version = '0.0.4';
+const version = '0.0.5';
 const codename = 'pikpikcu';
 
 program
-  .usage('nodesub [flags]')
   .description('Nodesub is a command-line tool for finding subdomains in bug bounty programs.')
   .option('-u, --url <domain>', 'Main domain')
   .option('-l, --list <file>', 'File with list of domains')
+  .option('-dns, --dnsenum', 'Enable DNS Enumeration (if you enable this the enumeration process will be slow)')
   .option('-rl, --rate-limit <limit>', 'Rate limit for DNS requests (requests per second)', '0')
   .option('-wl, --wildcard', 'Filter subdomains by wildcard DNS resolution Default:(False)')
   .option('-w, --wordlist <file>', 'Wordlist file')
   .option('-r, --recursive', 'Enable recursive subdomain enumeration')
   .option('-p, --permutations', 'Enable subdomain permutations')
-  .option('-e, --env <env>', 'Environment Subquest options eg:("PORT=443, DNS=8.8.8.8, LIMIT=10")')
   .option('-re,--resolver <file>', 'File with list of resolvers')
   .option('-pr, --proxy <proxy>', 'Proxy URL')
   .option('-pa, --proxy-auth <username:password>', 'Proxy authentication credentials')
@@ -65,22 +66,17 @@ spinner.setSpinnerString('|/-\\');
 // Set max old space size for JavaScript heap
 const defaultMaxOldSpaceSize = 10048; // Default heap size in MB
 
+// Create an instance of axios with rate limiting
+const axiosWithRateLimit = rateLimit(axios.create(), {
+	maxRequests: 1, // Set the maximum number of requests per second
+	perMilliseconds: 100, // Set the time window in milliseconds
+});
+
 // Set Limit Shodan
 let lastShodanCallTime = null;
 let shodanCallCount = 0;
 const shodanRateLimit = 2; // Limit on the number of summons per second
 const shodanRateLimitInterval = 1000; // Time range in milliseconds (for example, 1000 ms = 1 second)
-
-if (argv.size) {
-	const maxOldSpaceSize = parseInt(argv.size);
-	if (maxOldSpaceSize > 0) {
-		process.env.NODE_OPTIONS = `--max-old-space-size=${maxOldSpaceSize}`;
-	} else {
-		process.env.NODE_OPTIONS = `--max-old-space-size=${defaultMaxOldSpaceSize}`;
-	}
-} else {
-	process.env.NODE_OPTIONS = `--max-old-space-size=${defaultMaxOldSpaceSize}`;
-}
 
 // Function to execute shell command and get the output
 function runCommand(command) {
@@ -102,6 +98,53 @@ function delay(ms) {
 	});
 }
 
+// Function to create directory
+function createDirectory(dirPath) {
+	if (!fs.existsSync(dirPath)) {
+		fs.mkdirSync(dirPath, {
+			recursive: true
+		});
+	}
+}
+
+// Function to read wordlist file
+function readWordlistFile(wordlistFile) {
+	try {
+		const data = fs.readFileSync(wordlistFile, 'utf8');
+		const lines = data.split('\n').filter(Boolean); // Filter out empty lines
+		return lines;
+	} catch (error) {
+		console.error(`${clc.red('[!]')} Error reading wordlist file:`, error);
+		return [];
+	}
+}
+
+// Function to filter subdomains by wildcard DNS resolution
+function filterWildcardSubdomains(subdomains) {
+	if (argv.wildcard) {
+		return subdomains;
+	}
+
+	return subdomains.filter(({
+		isActive
+	}) => isActive);
+}
+
+// Function to Extension Output file
+function getOutputFileExtension(format) {
+	if (format === 'txt') {
+		return 'txt';
+	} else if (format === 'json') {
+		return 'json';
+	} else if (format === 'csv') {
+		return 'csv';
+	} else if (format === 'pdf') {
+		return 'pdf';
+	} else {
+		throw new Error('Invalid output file format');
+	}
+}
+
 // Function to get the current user's home directory
 async function getHomeDirectory() {
 	let homeDirectory = '';
@@ -111,15 +154,6 @@ async function getHomeDirectory() {
 		homeDirectory = await runCommand('echo $HOME');
 	}
 	return homeDirectory;
-}
-
-// Function to create directory
-function createDirectory(dirPath) {
-	if (!fs.existsSync(dirPath)) {
-		fs.mkdirSync(dirPath, {
-			recursive: true
-		});
-	}
 }
 
 // Function to download file
@@ -220,12 +254,6 @@ function readApiKeys() {
 	return apiKeys;
 }
 
-// Create an instance of axios with rate limiting
-const axiosWithRateLimit = rateLimit(axios.create(), {
-	maxRequests: 1, // Set the maximum number of requests per second
-	perMilliseconds: 100, // Set the time window in milliseconds
-});
-
 // Function to run dnsrecon and get the list of subdomains
 async function runDnsrecon(domain) {
 	try {
@@ -245,12 +273,252 @@ async function runDnsrecon(domain) {
 	}
 }
 
+// generateCombinations
+function generateCombinations() {
+	const chars = 'abcdefghijklmnopqrstuvwxyz0123456789.-_';
+	const combinations = [];
+  
+	for (let i = 0; i < chars.length; i++) {
+	  for (let j = 0; j < chars.length; j++) {
+		for (let k = 0; k < chars.length; k++) {
+		  combinations.push(chars[i] + chars[j] + chars[k]);
+		}
+	  }
+	}
+  
+	return combinations;
+}  
+
+async function getSubDomains(domain) {
+    try {
+        const dictionary = generateCombinations();
+        fs.writeFileSync('dictionary.txt', dictionary.join('\n'));
+
+        const enumoptions = {
+            host:`${domain}`,
+            rateLimit: 500,
+			port: [
+				'443',
+				'80',
+				'8080',
+				'8081'
+			],
+            dnsServer: [
+                    '1.0.0.1',
+                    '103.3.46.105',
+                    '1.1.1.1',
+					'114.114.114.114',
+					'114.114.115.115',
+					'115.85.69.162',
+					'12.127.16.67',
+					'12.127.17.72',
+					'129.250.35.250',
+					'129.250.35.251',
+					'137.82.1.1',
+					'139.130.4.4',
+					'141.1.1.1',
+					'141.1.27.249',
+					'142.103.1.1',
+					'142.46.1.130',
+					'149.112.112.10',
+					'152.99.1.10',
+					'152.99.200.6',
+					'164.124.101.2',
+					'164.124.107.9',
+					'165.87.13.129',
+					'165.87.201.244',
+					'168.126.63.1',
+					'168.215.165.186',
+					'168.215.210.50',
+					'168.95.1.1',
+					'192.172.250.8',
+					'193.111.144.145',
+					'193.111.144.161',
+					'193.111.200.191',
+					'193.226.61.1',
+					'193.58.204.59',
+					'193.58.251.251',
+					'193.89.248.1',
+					'193.95.93.243',
+					'193.95.93.77',
+					'194.1.154.37',
+					'194.145.240.6',
+					'194.150.168.168',
+					'194.172.160.4',
+					'194.25.0.52',
+					'194.25.0.60',
+					'194.77.8.1',
+					'195.113.144.194',
+					'195.153.19.10',
+					'195.153.19.5',
+					'195.182.110.132',
+					'195.186.1.110',
+					'195.186.1.111',
+					'195.186.4.110',
+					'195.186.4.111',
+					'195.243.214.4',
+					'195.27.1.1',
+					'195.35.110.4',
+					'195.67.27.18',
+					'195.69.65.98',
+					'195.99.66.220',
+					'198.60.22.2',
+					'198.82.247.34',
+					'199.44.194.2',
+					'200.221.11.100',
+					'200.221.11.101',
+					'200.40.230.36',
+					'200.56.224.11',
+					'200.57.2.108',
+					'200.57.7.61',
+					'200.95.144.3',
+					'202.130.97.65',
+					'202.130.97.66',
+					'202.136.162.11',
+					'202.138.120.87',
+					'202.180.160.1',
+					'202.248.20.133',
+					'202.248.37.74',
+					'202.30.143.11',
+					'202.43.178.245',
+					'202.51.96.5',
+					'202.86.8.100',
+					'203.119.36.106',
+					'203.119.8.106',
+					'203.146.237.22',
+					'203.146.237.23',
+					'203.198.7.66',
+					'203.239.131.1',
+					'203.248.252.2',
+					'204.117.214.10',
+					'204.95.160.2',
+					'205.134.162.20',
+					'205.151.222.25',
+					'205.171.2.65',
+					'206.253.194.65',
+					'206.253.33.130',
+					'206.253.33.131',
+					'206.51.143.55',
+					'207.17.190.5',
+					'207.248.224.71',
+					'207.248.224.72',
+					'207.248.57.10',
+					'208.48.253.106',
+					'208.67.220.220',
+					'208.67.220.222',
+					'208.67.222.220',
+					'208.67.222.222',
+					'208.72.120.204',
+					'208.78.24.238',
+					'208.79.56.204',
+					'209.216.160.13',
+					'209.216.160.2',
+					'209.51.161.14',
+					'210.180.98.69',
+					'210.220.163.82',
+					'210.94.0.7',
+					'211.115.194.2',
+					'211.115.194.3',
+					'211.237.65.31',
+					'211.63.64.11',
+					'212.118.0.2',
+					'212.14.253.242',
+					'212.19.96.2',
+					'212.230.255.1',
+					'212.230.255.12',
+					'212.89.130.180',
+					'212.96.1.70',
+					'212.97.32.2',
+					'213.211.50.1',
+					'213.211.50.2',
+					'213.244.72.31',
+					'213.55.96.166',
+					'216.106.1.2',
+					'216.136.95.2',
+					'216.17.128.1',
+					'216.17.128.2',
+					'216.194.28.33',
+					'216.21.128.22',
+					'216.21.129.22',
+					'216.244.192.3',
+					'216.254.141.13',
+					'216.254.141.2',
+					'216.52.65.1',
+					'216.52.65.33',
+					'217.144.6.6',
+					'217.17.34.68',
+					'217.18.206.12',
+					'217.18.206.22',
+					'217.73.17.110',
+					'218.102.23.228',
+					'219.250.36.130',
+					'219.252.2.100',
+					'221.139.13.130',
+					'24.154.1.4',
+					'24.154.1.5',
+					'50.21.174.18',
+					'62.134.11.4',
+					'62.140.239.1',
+					'62.149.128.2',
+					'62.233.128.17',
+					'62.76.76.62',
+					'63.171.232.38',
+					'63.171.232.39',
+					'64.132.94.250',
+					'64.135.1.20',
+					'64.94.1.1',
+					'64.94.1.33',
+					'65.203.109.2',
+					'66.163.0.161',
+					'66.163.0.173',
+					'66.28.0.45',
+					'66.28.0.61',
+					'69.67.97.18',
+					'72.52.104.74',
+					'77.88.8.1',
+					'77.88.8.2',
+					'77.88.8.8',
+					'77.88.8.88',
+					'79.141.82.250',
+					'79.141.83.250',
+					'80.254.79.157',
+					'80.67.169.12',
+					'8.15.12.5',
+					'82.151.90.1',
+					'82.96.65.2',
+					'83.137.41.8',
+					'83.137.41.9',
+					'84.200.69.80',
+					'84.200.70.40',
+					'84.8.2.11',
+					'87.204.28.12',
+					'87.229.99.1',
+					'8.8.4.4',
+					'8.8.8.8',
+					'89.107.129.15',
+					'92.43.224.1',
+					'95.158.128.2',
+					'95.158.129.2',
+					'9.9.9.10'					
+            ], // array of DNS servers to use
+            recursive: false, 
+            dictionary: '/usr/share/wordlists/metasploit/lync_subdomains.txt', 
+        };
+
+		const subdomains = await subquest.getSubDomains(enumoptions);
+		return subdomains || [];
+		return [];
+	  } finally {
+		fs.unlinkSync('dictionary.txt'); // delete the dictionary file
+	  }
+}
+
 // Function to run dnsenum and get the list of subdomains
 async function runDnsenum(domain) {
 	try {
 		const commands = [
 			`dnsenum ${domain} --enum --threads 5 -s 15 -w --zonewalk`,
-			`dnsenum ${domain} --recursion --noreverse`,
+			`dnsenum ${domain} -r -t 2 -p 100 -s 100`
 			//`dnsenum ${domain} --dnsserver NS`,
 		];
 
@@ -307,7 +575,6 @@ async function runBing(domain, first) {
 		return uniqueSubdomains;
 	} catch (error) {
 		console.error(`${clc.red('\n[!]')} Error running Bing search:`, error.response ? error.response.statusText : error.message);
-		return [];
 	}
 }
 
@@ -322,10 +589,12 @@ async function runCrtsh(domain) {
 		// Get all subdomains
 		$('table tr').each((index, element) => {
 			const subdomainText = $(element).find('td:nth-child(5)').text().trim();
-			const subdomainMatches = subdomainText.match(/DNS:(.*?)\n/);
-			if (subdomainMatches && subdomainMatches.length > 1) {
-				const subdomain = subdomainMatches[1];
-				subdomains.push(subdomain);
+			const subdomainMatches = subdomainText.match(/([a-zA-Z0-9][a-zA-Z0-9-]{1,61}\.[a-zA-Z\.]{2,})/);
+			if (subdomainMatches && subdomainMatches.length > 0) {
+				const subdomain = subdomainMatches[0];
+				if (subdomain.endsWith(domain)) { // ensure the subdomain belongs to the main domain
+					subdomains.push(subdomain);
+				}
 			}
 		});
 
@@ -339,6 +608,7 @@ async function runCrtsh(domain) {
 		return [];
 	}
 }
+
 
 // Function to fetch subdomains from AlienVault OTX API
 async function fetchAlienVaultSubdomains(domain) {
@@ -407,7 +677,7 @@ async function runAmass(domain) {
   }
   
   // Function to run Subfinder and get the list of subdomains
-  async function runSubfinder(domain) {
+async function runSubfinder(domain) {
     try {
       const command = `subfinder -all -d "${domain}" -rl 100 -recursive`;
       const output = await runCommand(command);
@@ -545,36 +815,6 @@ async function enumerateSubdomains(domain, subdomains) {
 	}; // Return both resolved and subdomains
 }
 
-// ENV Options
-let envOptions = {};
-
-// ENV
-if (argv.env) {
-    argv.env.split(',').forEach(pair => {
-        const [key, value] = pair.split('=').map(item => item.trim());
-        envOptions[key.toUpperCase()] = value;
-    });
-}
-
-const options = {
-    host: argv.url,
-    port: parseInt(envOptions.PORT) || 443, // Ubah ke 443
-    server: envOptions.DNS || '8.8.8.8',
-    recursive: true,
-    rateLimit: parseInt(envOptions.LIMIT) || 10, // Ubah ke 10
-};
-
-// Subquest Subdomain Enumerations
-async function runSubquest(options) {
-    try {
-        const subdomains = await subquest.getSubDomains(options);
-        return subdomains; 
-    } catch (error) {
-        console.error(`${clc.red('\n[!]')} Error running Subquest:`, error.response ? error.response.statusText : error.message);
-        return []; 
-    }
-}
-
 // Function to rate limit DNS requests
 async function rateLimitDNSRequests(subdomains) {
 	const rateLimit = parseInt(argv.rateLimit);
@@ -615,17 +855,6 @@ async function rateLimitDNSRequests(subdomains) {
 	await Promise.all(rateLimitedSubdomains); // Await the resolution of DNS requests
 
 	return rateLimitedSubdomains;
-}
-
-// Function to filter subdomains by wildcard DNS resolution
-function filterWildcardSubdomains(subdomains) {
-	if (argv.wildcard) {
-		return subdomains;
-	}
-
-	return subdomains.filter(({
-		isActive
-	}) => isActive);
 }
 
 // Function to perform recursive subdomain enumeration
@@ -672,21 +901,9 @@ async function performRecursiveEnumeration(domain, wordlist) {
 	};
 }
 
-// Function to read wordlist file
-function readWordlistFile(wordlistFile) {
-	try {
-		const data = fs.readFileSync(wordlistFile, 'utf8');
-		const lines = data.split('\n').filter(Boolean); // Filter out empty lines
-		return lines;
-	} catch (error) {
-		console.error(`${clc.red('[!]')} Error reading wordlist file:`, error);
-		return [];
-	}
-}
-
 // Function to perform subdomain brute force using wordlist with early exit
 async function bruteForceSubdomains(domain, wordlist) {
-	const CHUNK_SIZE = 99999999999; // Set the chunk size for wordlist processing
+	const CHUNK_SIZE = 10000; // Set the chunk size for wordlist processing
 	const subdomains = [];
 	const accuracy = 0.5; // Desired accuracy (50%)
 
@@ -736,21 +953,6 @@ async function earlyExitCheck(subdomain, accuracy) {
 	return true;
 }
 
-// Function to Extension Output file
-function getOutputFileExtension(format) {
-	if (format === 'txt') {
-		return 'txt';
-	} else if (format === 'json') {
-		return 'json';
-	} else if (format === 'csv') {
-		return 'csv';
-	} else if (format === 'pdf') {
-		return 'pdf';
-	} else {
-		throw new Error('Invalid output file format');
-	}
-}
-
 // Resolve and save subdomains for a single domain
 async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
 	spinner.setSpinnerTitle(`${clc.green('[V]')} Processing Subdomains Resolving... %s`);
@@ -773,16 +975,16 @@ async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
 	spinner.stop(true);
   
 	// Print the number of subdomains found
-	console.log(`${clc.green('[*]')} Resolved Subdomains: ${Array.from(new Set(resolvedSubdomains)).length}`);
-	console.log(`${clc.yellow('[*]')} Failed Resolved Subdomains: ${Array.from(new Set(failedSubdomains)).length}`);
+	console.log(`${clc.green('[*]')} Resolved Subdomains: ${clc.yellowBright(Array.from(new Set(resolvedSubdomains)).length)}`);
+	console.log(`${clc.red('[!]')} Failed Resolved Subdomains: ${clc.yellowBright(Array.from(new Set(failedSubdomains)).length)}`);
   
 	// Print subdomains if verbose flag is enabled
 	if (argv.verbose) {
-	  console.log("Resolved Subdomains:");
+	  console.log(`${clc.green('[*]')} Resolved Subdomains:`);
 	  const uniqueResolvedSubdomains = [...new Set(resolvedSubdomains.map(({ subdomain }) => subdomain))];
 	  console.log(uniqueResolvedSubdomains);
   
-	  console.log("Failed Resolved Subdomains:");
+	  console.log(`${clc.red('[!]')} Failed Resolved Subdomains:`);
 	  const uniqueFailedSubdomains = [...new Set(failedSubdomains.map(({ subdomain }) => subdomain))];
 	  console.log(uniqueFailedSubdomains);
 	}
@@ -815,9 +1017,9 @@ async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
 		fs.writeFileSync(resolvedOutputFile, resolvedOutputData, 'utf8');
 		fs.writeFileSync(failedOutputFile, failedOutputData, 'utf8');
 		fs.writeFileSync(allOutputFile, allOutputData, 'utf8');
-		console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${resolvedOutputFile}`);
-		console.log(`${clc.green('[v]')} Failed Resolved Subdomains saved to: ${failedOutputFile}`);
-		console.log(`${clc.green('[v]')} All Subdomains saved to: ${allOutputFile}`);
+		console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
+		console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
+		console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
 	  } else if (argv.format === 'json') {
 		const resolvedJsonData = JSON.stringify(cleanedResolvedSubdomains, null, 2);
 		const failedJsonData = JSON.stringify(cleanedFailedSubdomains, null, 2);
@@ -825,9 +1027,9 @@ async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
 		fs.writeFileSync(resolvedOutputFile, resolvedJsonData, 'utf8');
 		fs.writeFileSync(failedOutputFile, failedJsonData, 'utf8');
 		fs.writeFileSync(allOutputFile, allJsonData, 'utf8');
-		console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${resolvedOutputFile}`);
-		console.log(`${clc.green('[v]')} Failed Resolved Subdomains saved to: ${failedOutputFile}`);
-		console.log(`${clc.green('[v]')} All Subdomains saved to: ${allOutputFile}`);
+		console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
+		console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
+		console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
 	  } else if (argv.format === 'csv') {
 		const resolvedCsvWriter = createObjectCsvWriter({
 		  path: resolvedOutputFile,
@@ -859,9 +1061,9 @@ async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
 		await allCsvWriter.writeRecords(cleanedAllSubdomains.map((subdomain) => ({
 		  subdomain
 		})));
-		console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${resolvedOutputFile}`);
-		console.log(`${clc.green('[v]')} Failed Subdomains saved to: ${failedOutputFile}`);
-		console.log(`${clc.green('[v]')} All Subdomains saved to: ${allOutputFile}`);
+		console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
+		console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
+		console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
 	  } else if (argv.format === 'pdf') {
 		const PDFDocument = require('pdfkit');
 		const resolvedPdf = new PDFDocument();
@@ -901,10 +1103,9 @@ async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
 		  align: 'left'
 		});
 		allPdf.end();
-  
-		console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${resolvedOutputFile}`);
-		console.log(`${clc.green('[v]')} Failed Subdomains saved to: ${failedOutputFile}`);
-		console.log(`${clc.green('[v]')} All Subdomains saved to: ${allOutputFile}`);
+		console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
+		console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
+		console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
 	  } else {
 		console.error(`${clc.red('[!]')} Invalid output file format`);
 	  }
@@ -920,7 +1121,7 @@ async function main() {
       const configDirectory = path.join(homeDirectory, '.config', 'nodesub');
   
       // Parse command-line arguments
-      const { url, list, output, recursive, wordlist } = argv;
+      const { url, list, output, recursive, wordlist, size } = argv;
   
       // check if the directory already exists
       if (!fs.existsSync(configDirectory)) {
@@ -928,7 +1129,7 @@ async function main() {
   
         // Create a config.ini file with shodan="API_KEY"
         const configPath = path.join(configDirectory, 'config.ini');
-        const shodanApiKey = 'API_KEY'; // Ganti dengan API key Shodan yang valid
+        const shodanApiKey = 'API_KEY'; 
         const configContent = `shodan="${shodanApiKey}"`;
         fs.writeFileSync(configPath, configContent);
   
@@ -966,6 +1167,17 @@ async function main() {
         await processSubdomainEnumerations(url, outputFile, recursive, wordlist);
       }
 
+	  if (size) {
+		const maxOldSpaceSize = parseInt(argv.size);
+		if (maxOldSpaceSize > 0) {
+			process.env.NODE_OPTIONS = `--max-old-space-size=${maxOldSpaceSize}`;
+		} else {
+			process.env.NODE_OPTIONS = `--max-old-space-size=${defaultMaxOldSpaceSize}`;
+		}
+	  	} else {
+		process.env.NODE_OPTIONS = `--max-old-space-size=${defaultMaxOldSpaceSize}`;
+		}
+	
 	  if (argv.list) {
 		// Read the list of URLs from the file
 		try {
@@ -990,25 +1202,27 @@ async function main() {
   async function processSubdomainEnumerations(url, outputFile, recursive, wordlist) {
     console.log(`${clc.green('[🔍]')} Start Processing Subdomain Enumerations: ${clc.yellow(`[${url}]`)}`);
     const subdomains = [];
+	const { dnsenum, permutations } = argv;
   
     try {
       const domain = url;
-  
-      // Run Subquest
-      spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With Subquest %s`);
-      spinner.start();
-      const subquestSubdomains = await runSubquest(options);
-      spinner.stop(true);
-  
-      if (Array.isArray(subquestSubdomains) && subquestSubdomains.length > 0) {
-        console.log(`${clc.green('[V]')} Total subdomains from Subquest: ${clc.yellowBright(subquestSubdomains.length)}`);
-        subdomains.push(...subquestSubdomains);
-      } else {
-        console.error(`${clc.red('[!]')} Failed to retrieve subdomains from Subquest.`);
-      }
+
+      // Run subquest
+	  spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With Subquest %s`);
+	  spinner.start();
+	  
+	  try {
+		const foundSubdomains = await getSubDomains(domain);
+		spinner.stop(true);
+		console.log(`${clc.green('[V]')} Total subdomains from Subquest: ${clc.yellowBright(foundSubdomains.length)}`);
+		subdomains.push(...foundSubdomains);
+	  } catch (error) {
+		spinner.stop(true);
+		console.error(`[!] Error getting subdomains:`, error.response ? error.response.statusText : error.message);
+	  }
+
       // Run Bing
       spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With Bing Engine %s`);
-      spinner.setSpinnerString('|/-\\');
       spinner.start();
       const bingSubdomains = [];
   
@@ -1038,15 +1252,6 @@ async function main() {
       spinner.stop(true);
       console.log(`${clc.green('[V]')} Total subdomains from dnsrecon: ${clc.yellowBright(dnsreconSubdomains.length)}`);
       subdomains.push(...dnsreconSubdomains);
-
-
-	  // Run dnsenum
-      //spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With DNSSEC Zone Walking %s`);
-      //spinner.start();
-      //const dnsenumSubdomains = await runDnsenum(domain);
-      //spinner.stop(true);
-      //console.log(`${clc.green('[V]')} Total subdomains from dnsenum: ${clc.yellowBright(dnsenumSubdomains.length)}`);
-      //subdomains.push(...dnsenumSubdomains);
 
 	  // Run crt.sh
       spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With crt.sh %s`);
@@ -1082,7 +1287,7 @@ async function main() {
       subdomains.push(...subfinderSubdomains);
   
       // Run permutations if enabled
-      if (recursive) {
+      if (permutations) {
         spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Permutations %s`);
         spinner.start();
         const permutationSubdomains = await generatePermutations(domain);
@@ -1091,6 +1296,16 @@ async function main() {
         subdomains.push(...permutationSubdomains);
       }
   
+	  // Run dnsenum
+	  if (dnsenum) {
+		spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing DNS Enumeration %s`);
+    	spinner.start();
+    	const dnsenumSubdomains = await runDnsenum(domain);
+    	spinner.stop(true);
+    	console.log(`${clc.green('[V]')} Total subdomains from dnsenum: ${clc.yellowBright(dnsenumSubdomains.length)}`);
+    	subdomains.push(...dnsenumSubdomains);
+	  }
+
       // Run brute force if wordlist provided or using default wordlist for recursive
       if (recursive || wordlist) {
         spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Bruteforcing %s`);
@@ -1119,11 +1334,12 @@ async function main() {
     } catch (error) {
       console.error(`${clc.red('\n[!]')} Error occurred while processing subdomain enumerations:`, error.response ? error.response.statusText : error.message);
     }
-  
-    spinner.stop(true);
+    
+	spinner.stop(true);
   }
   
 // Run the main function
 main().catch((error) => {
 	console.error(`${clc.red('[!]')} An error occurred:`, error.response ? error.response.statusText : error.message);
+	spinner.stop(true);
 });
