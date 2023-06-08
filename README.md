@@ -24,7 +24,6 @@ Edit File `~/.config/nodesub/config.ini`
 - `-w, --wordlist <file>`: Specify a wordlist file for subdomain permutation.
 - `-r, --recursive`: Enable recursive subdomain enumeration.
 - `-p, --permutations`: Enable subdomain permutations.
-- `-e, --env <env>`: Set environment Subquest options. Example: "PORT=443, DNS=8.8.8.8, LIMIT=10".
 - `-re, --resolver <file>`: Specify a file with a list of DNS resolvers.
 - `-pr, --proxy <proxy>`: Specify a proxy URL.
 - `-pa, --proxy-auth <username:password>`: Specify proxy authentication credentials.
