@@ -22,7 +22,7 @@ To install Nodesub, use the following command:
 
 - Edit File `~/.config/nodesub/config.ini`
 
-# Usage
+# ✔️ Usage
 
 ```
 nodesub -h
@@ -55,13 +55,25 @@ Options:
   -f, --format <format>                  Output file format (txt, json, csv, pdf) (default: "txt")
   -h, --help                             display help for command
 ```
-## Examples
+## ✔️ Examples
 
 - Enumerate subdomains for a single domain:
-  	`nodesub -u example.com`
+  	```
+	nodesub -u example.com
+	```
 
 - Enumerate subdomains for a list of domains from a file:
-	`nodesub -l domains.txt`
+	```
+	nodesub -l domains.txt
+	```
 
 - Enable recursive subdomain enumeration and output the results to a JSON file:
-	`nodesub -u example.com -r -o output.json -f json`
+	```
+	nodesub -u example.com -r -o output.json -f json
+	```
+
+### ✔️ ***Contribution & License***
+
+You can contribute in following ways:
+  - Give suggestions to make it better
+  - Fix issues & submit a pull request
