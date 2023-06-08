@@ -16,7 +16,11 @@ Nodesub is a command-line tool for finding subdomains in bug bounty programs. It
 
 To install Nodesub, use the following command:
 
-`npm install -g nodesub`
+***required node version: V20.x***
+
+```
+npm install -g nodesub
+```
 
 **NOTE:**
 
