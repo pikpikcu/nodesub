@@ -8,7 +8,7 @@ Nodesub is a command-line tool for finding subdomains in bug bounty programs. It
 # Features
 
 <h1 align="left">
-  <img src="nodesub.png" alt="subfinder" width="700px"></a>
+  <img src="nodesub.png" alt="nodesub" width="700px"></a>
   <br>
 </h1>
 
