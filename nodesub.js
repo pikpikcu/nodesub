@@ -40,13 +40,15 @@ const HttpProxyAgent = require('http-proxy-agent');
 const HttpsProxyAgent = require('https-proxy-agent');
 const SocksProxyAgent = require('socks-proxy-agent');
 
-const version = '0.0.7';
+const version = '0.0.8';
 const codename = 'pikpikcu';
 
 program
     .description('Nodesub is a command-line tool for finding subdomains in bug bounty programs.')
     .option('-u, --url <domain>', 'Main domain')
     .option('-l, --list <file>', 'File with list of domains')
+    .option('-cidr, --cidr <cidr>', 'Perform subdomain enumeration using CIDR')
+    .option('-asn, --asn <asn>', 'Perform subdomain enumeration using ASN')
     .option('-dns, --dnsenum', 'Enable DNS Enumeration (if you enable this the enumeration process will be slow)')
     .option('-rl, --rate-limit <limit>', 'Rate limit for DNS requests (requests per second)', '0')
     .option('-ip, --ips', 'Ekstrak IPs in Subdomain Resolved')
@@ -99,7 +101,7 @@ function runCommand(command) {
 
 function isSubfinderInstalled() {
     try {
-        execSync('subfinder -h');
+        runCommand('subfinder -h');
         return true;
     } catch (error) {
         return false;
@@ -108,7 +110,7 @@ function isSubfinderInstalled() {
 
 function isAlteryxInstalled() {
     try {
-        execSync('alterx --version');
+        runCommand('alterx --version');
         return true;
     } catch (error) {
         return false;
@@ -117,7 +119,7 @@ function isAlteryxInstalled() {
 
 function installAlteryx() {
     try {
-        execSync('go install github.com/projectdiscovery/alterx/cmd/alterx@latest');
+        runCommand('go install github.com/projectdiscovery/alterx/cmd/alterx@latest');
         console.log(`${clc.green('[V]')} Alteryx installed successfully`);
     } catch (error) {
         console.error(`${clc.red('[!]')} Error installing Alteryx:`, error);
@@ -386,7 +388,7 @@ async function getDnsServers() {
     return dnsServers;
 }
 
-
+// subquest
 async function getSubDomains(domain) {
     try {
         const chars = 'abcdefghijklmnopqrstuvwxyz0123456789.-_';
@@ -415,14 +417,9 @@ async function getSubDomains(domain) {
 // Subdomain enumeration with SecurityTrails
 async function runSecurityTrails(domain, securityTrailsApiKey) {
     try {
-        let lastSecurityTrailsCallTime = null;
-        const securityTrailsRateLimitInterval = 10;
-
         const curlCommand = `curl "https://api.securitytrails.com/v1/domain/${domain}/subdomains" -H 'apikey: ${securityTrailsApiKey}'`;
         const response = await runCommand(curlCommand);
         const data = JSON.parse(response);
-
-        lastSecurityTrailsCallTime = Date.now();
 
         const subdomains = data.subdomains.map(subdomain => `${subdomain}.${domain}`);
 
@@ -435,6 +432,7 @@ async function runSecurityTrails(domain, securityTrailsApiKey) {
         return [];
     }
 }
+
 
 // Anubis DB Subdomain Enumerations
 async function runAnubisDB(domain) {
@@ -451,60 +449,35 @@ async function runAnubisDB(domain) {
     }
 }
 
-// Function to check if dnsenum is installed
-async function checkDnsenumInstalled() {
-    try {
-        await exec('dnsenum --help');
-        return true;
-    } catch (error) {
-        return false;
-    }
-}
-
-// Function to install dnsenum
-async function installDnsenum() {
-    try {
-        console.log('Installing dnsenum...');
-        await exec('sudo apt-get install dnsenum');
-        console.log('dnsenum installed successfully.');
-    } catch (error) {
-        console.error('Error installing dnsenum:', error.message);
-    }
-}
-
 // Function to run dnsenum and get the list of subdomains
 async function runDnsenum(domain) {
-    const isDnsenumInstalled = await checkDnsenumInstalled();
-
-    if (!isDnsenumInstalled) {
-        await installDnsenum();
-    }
-
     try {
-        const commands = [
-		`dnsenum ${domain} --enum --threads 5 -s 15 -w --zonewalk`,
-		`dnsenum ${domain} -r -t 2 -p 100 -s 100`
-	  ];
-
-        const outputs = await Promise.all(commands.map(command => runCommand(command)));
-
-        const subdomains = outputs.flatMap(output => {
-            const lines = output.split('\n');
-            return lines.map(line => {
-                const match = line.match(/^(\*\.)?([a-zA-Z0-9][a-zA-Z0-9-]*\.)+[a-zA-Z]{2,}$/g);
-                if (match) {
-                    return match[0];
-                }
-            }).filter(Boolean);
-        });
-
-        return subdomains;
+      const commands = [
+        `dnsenum ${domain} --enum --threads 5 -s 15 -w --zonewalk`,
+        `dnsenum ${domain} --recursion --noreverse`,
+        //`dnsenum ${domain} --dnsserver NS`,
+      ];
+  
+      const outputs = await Promise.all(commands.map(command => runCommand(command)));
+  
+      const subdomains = outputs.flatMap(output => {
+        const lines = output.split('\n');
+        return lines.map(line => {
+          const match = line.match(/^(\*\.)?([a-zA-Z0-9][a-zA-Z0-9-]*\.)+[a-zA-Z]{2,}$/g);
+          if (match) {
+            return match[0];
+          }
+        }).filter(Boolean);
+      });
+  
+      return subdomains;
     } catch (error) {
-        console.error(clc.red('\n[!] Error running dnsenum:'), error.response ? error.response.statusText : error.message);
-        return [];
+      console.error(clc.red('\n[!] Error running dnsenum:'), error.response ? error.response.statusText : error.message);
+      return [];
     }
 }
 
+// runBaiduSearch
 async function runBaiduSearch(domain, page = 1) {
     try {
         const url = new URL(`https://www.baidu.com/s?wd=site%3A*.${domain}&pn=${(page - 1) * 10}`);
@@ -673,49 +646,18 @@ async function runShodan(domain, shodanApiKey) {
     }
 }
 
-// Function to check if Amass is installed
-async function checkAmassInstallation() {
-    try {
-        await runCommand('amass -version');
-        return true;
-    } catch (error) {
-        return false;
-    }
-}
-
-// Function to install Amass if it is not installed
-async function installAmass() {
-    try {
-        //await runCommand('sudo apt update');
-        //await runCommand('sudo apt install amass');
-        await runCommand('go install -v github.com/owasp-amass/amass/v3/...@master')
-        return true;
-    } catch (error) {
-        console.error(`${clc.red('\n[!]')} Error installing Amass:`, error.response ? error.response.statusText : error.message);
-        return false;
-    }
-}
-
 // Function to run Amass and get the list of subdomains
 async function runAmass(domain) {
     try {
-        const isAmassInstalled = await checkAmassInstallation();
-        if (!isAmassInstalled) {
-            const isInstallationSuccessful = await installAmass();
-            if (!isInstallationSuccessful) {
-                return [];
-            }
-        }
-
         const commands = [
-		`amass enum -d "${domain}" -passive`,
-		`amass enum -d "${domain}" -active`,
-	  ];
+            `amass enum -d "${domain}" -passive`,
+            `amass enum -d "${domain}" -active`,
+        ];
         const output = await Promise.all(commands.map(runCommand));
         const subdomains = output.join('\n').split('\n');
         return subdomains;
     } catch (error) {
-        console.error(`${clc.red('\n[!]')} Error running Amass:`, error.response ? error.response.statusText : error.message);
+        console.error(`${clc.red('\n[!]')} Error running Amass:`, error);
         return [];
     }
 }
@@ -726,7 +668,7 @@ async function runSubfinder(domain) {
         const isInstalled = isSubfinderInstalled();
         if (!isInstalled) {
             console.log(`${clc.red('\n[!]')} Subfinder is not installed. Installing Subfinder...`);
-            execSync('go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest');
+            runCommand('go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest');
         }
 
         const commands = [
@@ -1396,14 +1338,6 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
         console.log(`${clc.green('[V]')} Total subdomains from Subfinder: ${clc.yellowBright(subfinderSubdomains.length)}`);
         subdomains.push(...subfinderSubdomains);
 
-        // Run dnsrecon
-        spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With DNSSEC Zone Walking %s`);
-        spinner.start();
-        const dnsreconSubdomains = await runDnsrecon(domain);
-        spinner.stop(true);
-        console.log(`${clc.green('[V]')} Total subdomains from dnsrecon: ${clc.yellowBright(dnsreconSubdomains.length)}`);
-        subdomains.push(...dnsreconSubdomains);
-
         // Run permutations if enabled
         if (permutations) {
             spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Permutations %s`);
@@ -1416,12 +1350,20 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
 
         // Run dnsenum
         if (dnsenum) {
+            //Run dnsenum
             spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing DNS Enumeration %s`);
             spinner.start();
             const dnsenumSubdomains = await runDnsenum(domain);
             spinner.stop(true);
             console.log(`${clc.green('[V]')} Total subdomains from dnsenum: ${clc.yellowBright(dnsenumSubdomains.length)}`);
             subdomains.push(...dnsenumSubdomains);
+            // Run dnsrecon
+            spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With DNSSEC Zone Walking %s`);
+            spinner.start();
+            const dnsreconSubdomains = await runDnsrecon(domain);
+            spinner.stop(true);
+            console.log(`${clc.green('[V]')} Total subdomains from dnsrecon: ${clc.yellowBright(dnsreconSubdomains.length)}`);
+            subdomains.push(...dnsreconSubdomains);
         }
 
         // Run brute force if wordlist provided or using default wordlist for recursive
