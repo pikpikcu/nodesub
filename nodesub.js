@@ -108,6 +108,15 @@ function isSubfinderInstalled() {
     }
 }
 
+function isAmassInstalled() {
+    try {
+        runCommand('amass -h');
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
 function isAlteryxInstalled() {
     try {
         runCommand('alterx --version');
@@ -649,6 +658,11 @@ async function runShodan(domain, shodanApiKey) {
 // Function to run Amass and get the list of subdomains
 async function runAmass(domain) {
     try {
+        const isInstalled = isAmassInstalled();
+        if (!isInstalled) {
+            console.log(`${clc.red('\n[!]')} Amass is not installed. Installing Amass...`);
+            runCommand('go install -v github.com/owasp-amass/amass/v3/...@master');
+        }
         const commands = [
             `amass enum -d "${domain}" -passive`,
             `amass enum -d "${domain}" -active`,
