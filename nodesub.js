@@ -40,23 +40,23 @@ const HttpProxyAgent = require('http-proxy-agent');
 const HttpsProxyAgent = require('https-proxy-agent');
 const SocksProxyAgent = require('socks-proxy-agent');
 
-const version = '0.0.8';
+const version = '0.1.0';
 const codename = 'pikpikcu';
 
 program
     .description('Nodesub is a command-line tool for finding subdomains in bug bounty programs.')
     .option('-u, --url <domain>', 'Main domain')
     .option('-l, --list <file>', 'File with list of domains')
-    .option('-cidr, --cidr <cidr>', 'Perform subdomain enumeration using CIDR')
-    .option('-asn, --asn <asn>', 'Perform subdomain enumeration using ASN')
+    .option('-c, --cidr <cidr/file>', 'Perform subdomain enumeration using CIDR')
+    .option('-a, --asn <asn/file>', 'Perform subdomain enumeration using ASN')
     .option('-dns, --dnsenum', 'Enable DNS Enumeration (if you enable this the enumeration process will be slow)')
     .option('-rl, --rate-limit <limit>', 'Rate limit for DNS requests (requests per second)', '0')
     .option('-ip, --ips', 'Ekstrak IPs in Subdomain Resolved')
     .option('-wl, --wildcard', 'Filter subdomains by wildcard DNS resolution Default:(False)')
-    .option('-w, --wordlist <file>', 'Wordlist file')
     .option('-r, --recursive', 'Enable recursive subdomain enumeration')
     .option('-p, --permutations', 'Enable subdomain permutations')
     .option('-re,--resolver <file>', 'File with list of resolvers')
+    .option('-w, --wordlist <file>', 'Wordlist file')
     .option('-pr, --proxy <proxy>', 'Proxy URL')
     .option('-pa, --proxy-auth <username:password>', 'Proxy authentication credentials')
     .option('-s, --size <size>', 'Max old space size heap Default:(10048 MB)')
@@ -661,11 +661,11 @@ async function runAmass(domain) {
         const isInstalled = isAmassInstalled();
         if (!isInstalled) {
             console.log(`${clc.red('\n[!]')} Amass is not installed. Installing Amass...`);
-            runCommand('go install -v github.com/owasp-amass/amass/v3/...@master');
+            await runCommand('go install -v github.com/owasp-amass/amass/v3/...@master');
         }
         const commands = [
             `amass enum -d "${domain}" -passive`,
-            `amass enum -d "${domain}" -active`,
+            //`amass enum -d "${domain}" -active`,
         ];
         const output = await Promise.all(commands.map(runCommand));
         const subdomains = output.join('\n').split('\n');
@@ -682,13 +682,13 @@ async function runSubfinder(domain) {
         const isInstalled = isSubfinderInstalled();
         if (!isInstalled) {
             console.log(`${clc.red('\n[!]')} Subfinder is not installed. Installing Subfinder...`);
-            runCommand('go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest');
+            await runCommand('go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest');
         }
 
         const commands = [
             `subfinder -all -d "${domain}" -rl 100 -recursive`,
             `subfinder -all -d "${domain}" -rl 1000 -active`,
-            `echo "${domain}" | subfinder -silent -all -recursive | subfinder -rl 1000 `,
+            //`echo "${domain}" | subfinder -silent -all -recursive | subfinder -rl 1000 `,
         ];
 
         const output = await Promise.all(commands.map(runCommand));
@@ -699,6 +699,7 @@ async function runSubfinder(domain) {
         return [];
     }
 }
+
 
 // Function to perform subdomain permutations using AlterX
 async function generatePermutations(domain) {
@@ -949,6 +950,64 @@ async function earlyExitCheck(subdomain, accuracy) {
     return true;
 }
 
+// Function to get subdomains from CIDR
+async function getSubdomainsFromCIDR(cidr) {
+    try {
+      const subdomains = [];
+      // Perform subdomain enumeration using CIDR
+      // Replace the following code with your own implementation to extract subdomains from CIDR
+      // Example implementation using 'amass', 'mapcidr' command line tool
+      const commands = [
+        `amass intel -cidr ${cidr}`,
+        `echo ${cidr} | mapcidr -silent | tlsx -cn -silent -nc | tr -d '[]' | awk '{print $2}'`,
+      ];
+      const output = await Promise.all(commands.map(runCommand));
+      output.forEach((cmdOutput) => {
+        const lines = cmdOutput.split('\n');
+        lines.forEach((line) => {
+          const matches = line.match(/\b([a-zA-Z0-9.-]+)\b/g);
+          if (matches) {
+            subdomains.push(...matches);
+          }
+        });
+      });
+  
+      return subdomains;
+    } catch (error) {
+      console.error(`${clc.red('\n[!]')} Error getting subdomains from CIDR:`, error.response ? error.response.statusText : error.message);
+      return [];
+    }
+  }
+
+// Function to get subdomains from ASN using whois
+async function getSubdomainsFromASN(asn) {
+    try {
+      const subdomains = [];
+      // Perform subdomain enumeration using ASN
+      // Replace the following code with your own implementation to extract subdomains from ASN
+      // Example implementation using 'amass', 'asnmap', and 'whois' command line tools
+      const commands = [
+        `amass intel -asn ${asn}`,
+        `asnmap -a ${asn} -silent | mapcidr -silent | tlsx -cn -silent -nc | tr -d '[]' | awk '{print $2}'`,
+        `whois -h whois.radb.net -- '-i origin ${asn}' | grep -Eo "([a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}"`,
+      ];
+      const output = await Promise.all(commands.map(runCommand));
+      output.forEach((cmdOutput) => {
+        const lines = cmdOutput.split('\n');
+        lines.forEach((line) => {
+          const matches = line.match(/\b([a-zA-Z0-9.-]+)\b/g);
+          if (matches) {
+            subdomains.push(...matches);
+          }
+        });
+      });
+      return subdomains;
+    } catch (error) {
+      console.error(`${clc.red('\n[!]')} Error getting subdomains from ASN:`, error.response ? error.response.statusText : error.message);
+      return [];
+    }
+}
+  
 // Resolve and save subdomains for a single domain
 async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
     spinner.setSpinnerTitle(`${clc.green('[V]')} Processing Subdomains Resolving... %s`);
@@ -1009,15 +1068,33 @@ async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
 
     // Save the results to an output file if provided
     if (outputFile) {
-        const resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_${domain}.${getOutputFileExtension(argv.format)}`;
-        const failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_${domain}.${getOutputFileExtension(argv.format)}`;
-        const allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_${domain}.${getOutputFileExtension(argv.format)}`;
-        const ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_${domain}.txt`; // New line
+        let resolvedOutputFile;
+        let failedOutputFile;
+        let allOutputFile;
+        let ipOutputFile;
 
+            // Generate output file names based on the input options
+        if (argv.cidr) {
+            resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_cidr.${getOutputFileExtension(argv.format)}`;
+            failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_cidr.${getOutputFileExtension(argv.format)}`;
+            allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_cidr.${getOutputFileExtension(argv.format)}`;
+            ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_cidr.${getOutputFileExtension(argv.format)}`; 
+        } else if (argv.asn) {
+            resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_asn.${getOutputFileExtension(argv.format)}`;
+            failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_asn.${getOutputFileExtension(argv.format)}`;
+            allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_asn.${getOutputFileExtension(argv.format)}`;
+            ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_asn.${getOutputFileExtension(argv.format)}`; 
+        } else {
+            resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_${domain}.${getOutputFileExtension(argv.format)}`;
+            failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_${domain}.${getOutputFileExtension(argv.format)}`;
+            allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_${domain}.${getOutputFileExtension(argv.format)}`;
+            ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_${domain}.${getOutputFileExtension(argv.format)}`; 
+        }
+        
         const resolvedOutputData = cleanedResolvedSubdomains.join('\n');
         const failedOutputData = cleanedFailedSubdomains.join('\n');
         const allOutputData = cleanedAllSubdomains.join('\n');
-        const ipOutputData = []; // New line
+        const ipOutputData = []; 
 
         // Extract IPs for resolved subdomains
         if (argv.ips) {
@@ -1196,8 +1273,61 @@ async function main() {
         }
 
         console.log(clc.greenBright(figlet.textSync('NodeSub', 'Poison')));
-        console.log(clc.bgBlue(`\t\t\t\t\t\t\t\t[🛠]Version:`, clc.redBright(`${version}`)));
-        console.log(clc.bgYellow(`\n\t\t\t{🖥}codename:`, clc.redBright(`${codename}\n\n\n\n`)));
+        console.log(clc.yellowBright(`\t\t\t [🛠]Version:`, clc.whiteBright(`${version}`)));
+        console.log(clc.blueBright(`\t\t\t{🖥}codename:`, clc.redBright(`${codename}\n\n\n\n`)));
+
+        // Function to read subdomains from a file
+        function readSubdomainsFromFile(filePath) {
+            try {
+            const subdomains = fs.readFileSync(filePath, 'utf8').split('\n');
+            return subdomains;
+            } catch (error) {
+            console.error(`${clc.red('\n[!]')} Error reading subdomains from file:`, error);
+            return [];
+            }
+        }
+
+        if (argv.cidr) {
+            const cidr = argv.cidr;
+            const outputFile = argv.output;
+            spinner.setSpinnerTitle(`${clc.green('[🔍]')} Start Processing Subdomain Enumerations from CIDR: ${clc.yellow(`[${cidr}]`)} %s`);
+            spinner.start();
+          
+            let subdomains = [];
+            if (fs.existsSync(cidr)) {
+              // Read CIDR from file if the input is a file path
+              cidrfile = readSubdomainsFromFile(cidr);
+              subdomains = await getSubdomainsFromCIDR(cidrfile);
+            } else {
+              // Otherwise, assume the input is a CIDR
+              subdomains = await getSubdomainsFromCIDR(cidr);
+            }
+          
+            spinner.stop(true);
+            await resolveAndSaveSubdomains(cidr, outputFile, subdomains);
+            return;
+          }
+          
+        if (argv.asn) {
+            const asn = argv.asn;
+            const outputFile = argv.output;
+            spinner.setSpinnerTitle(`${clc.green('[🔍]')} Start Processing Subdomain Enumerations from ASN: ${clc.yellow(`[${asn}]`)} %s`);
+            spinner.start();
+          
+            let subdomains = [];
+            if (fs.existsSync(asn)) {
+              // Read ASN from file if the input is a file path
+              asnfile = readSubdomainsFromFile(asn);
+              subdomains = await getSubdomainsFromCIDR(asnfile);
+            } else {
+              // Otherwise, assume the input is an ASN
+              subdomains = await getSubdomainsFromASN(asn);
+            }
+          
+            spinner.stop(true);
+            await resolveAndSaveSubdomains(asn, outputFile, subdomains);
+            return;
+        }
 
         if (!url && !list) {
             console.error(`${clc.red('[!]')} Please provide the URL or list option`);
