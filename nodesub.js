@@ -10,6 +10,10 @@ const Spinner = require('cli-spinner').Spinner;
 const figlet = require('figlet');
 const cloudscraper = require('cloudscraper');
 const subquest = require('subquest');
+const net = require('net');
+const forge = require('node-forge');
+const https = require('https');
+const DnsSocket = require('dns-socket');
 const {
     promisify
 } = require('util');
@@ -40,7 +44,7 @@ const HttpProxyAgent = require('http-proxy-agent');
 const HttpsProxyAgent = require('https-proxy-agent');
 const SocksProxyAgent = require('socks-proxy-agent');
 
-const version = '0.1.0';
+const version = '0.1.1';
 const codename = 'pikpikcu';
 
 program
@@ -143,6 +147,7 @@ function delay(ms) {
 }
 
 // Function to create directory
+ 
 function createDirectory(dirPath) {
     if (!fs.existsSync(dirPath)) {
         fs.mkdirSync(dirPath, {
@@ -152,6 +157,7 @@ function createDirectory(dirPath) {
 }
 
 // Function to read wordlist file
+
 function readWordlistFile(wordlistFile) {
     try {
         const data = fs.readFileSync(wordlistFile, 'utf8');
@@ -977,7 +983,7 @@ async function getSubdomainsFromCIDR(cidr) {
       console.error(`${clc.red('\n[!]')} Error getting subdomains from CIDR:`, error.response ? error.response.statusText : error.message);
       return [];
     }
-  }
+}
 
 // Function to get subdomains from ASN using whois
 async function getSubdomainsFromASN(asn) {
@@ -1007,7 +1013,136 @@ async function getSubdomainsFromASN(asn) {
       return [];
     }
 }
+
+// Function to get subdomains using DNS Dumpster Diving technique
+//async function getSubdomainsFromDnsDumpster(domain) {
+//    const socket = new DnsSocket();
+//    const subdomains = [];
+//    const dnsTypes = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SRV'];
+//  
+//    await Promise.all(
+//      dnsTypes.map((type) => {
+//        return new Promise((resolve, reject) => {
+//          socket.query({ questions: [{ type, name: `${domain}` }] }, 53, '8.8.8.8', (err, res) => {
+//            if (err) {
+//              reject(err);
+//              return;
+//            }
+//  
+//            const answers = res.answers.filter(answer => answer.type === 'A');
+//  
+//            answers.forEach(answer => {
+//              const subdomain = answer.name.replace(`.${domain}`, '');
+//              subdomains.push(subdomain);
+//            });
+//  
+//            resolve(); // Resolve after all answers are processed
+//          });
+//  
+//          // Timeout for each DNS query
+//          setTimeout(() => {
+//            reject(new Error(`DNS query for type ${type} timed out`));
+//          }, 5000); // Adjust the timeout duration as needed
+//        });
+//      })
+//    );
+//  
+//    return subdomains;
+//}
+
+// Subdomains from DNS Cache Snooping
+async function getSubdomainsFromDNSCache(domain) {
+    try {
+      const subdomains = [];
   
+      // Resolve the domain to get the IP addresses of the authoritative nameservers
+      const { address: authoritativeServer } = await dns.promises.resolve4(domain);
+  
+      // Query the DNS cache server for all subdomains
+      const dnsCacheServer = authoritativeServer;
+      const { answer } = await dns.promises.resolveAny(`${domain}.`, { server: { address: dnsCacheServer } });
+  
+      if (!answer) {
+        return subdomains; // No answer received, return empty array
+      }
+  
+      // Extract the subdomains from the DNS cache response
+      answer.forEach((record) => {
+        if (record.type === 'CNAME') {
+          subdomains.push(record.value.replace(`.${domain}.`, ''));
+        }
+      });
+  
+      return subdomains;
+    } catch (error) {
+      throw error;
+    }
+}
+
+// Ripe Data
+async function getSubdomainsFromRipeData(domain) {
+    try {
+      const url = `https://stat.ripe.net/data/dns-chain/data.json?resource=${domain}`;
+      const response = await axios.get(url);
+      const data = response.data;
+  
+      if (data && data.data && data.data.forward_nodes) {
+        const subdomains = Object.keys(data.data.forward_nodes);
+        return subdomains;
+      } else {
+        return [];
+      }
+    } catch (error) {
+      throw error;
+    }
+  }
+
+// Function to get subdomains from SSL/TLS certificates
+async function getSubdomainsFromCertificateInfo(certificate) {
+    const subdomains = [];
+  
+    // Extract subdomains from the certificate information
+    const { extensions } = certificate;
+    if (extensions) {
+      extensions.forEach((extension) => {
+        if (extension.name === 'subjectAltName') {
+          const altNames = extension.altNames;
+          altNames.forEach((altName) => {
+            if (altName.type === 2) { // DNS type
+              subdomains.push(altName.value);
+            }
+          });
+        }
+      });
+    }
+  
+    return subdomains;
+}
+  
+// Function to get subdomains from SSL/TLS certificates
+async function getSubdomainsFromCertificate(domain) {
+    return new Promise((resolve, reject) => {
+      const options = {
+        host: domain,
+        port: 443,
+        method: 'GET',
+        rejectUnauthorized: false
+      };
+  
+      const req = https.request(options, (res) => {
+        const certificate = res.socket.getPeerCertificate();
+        const subdomains = getSubdomainsFromCertificateInfo(certificate);
+        resolve(subdomains);
+      });
+  
+      req.on('error', (error) => {
+        reject(error.response ? error.response.statusText : error.message);
+      });
+  
+      req.end();
+    });
+}
+
 // Resolve and save subdomains for a single domain
 async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
     spinner.setSpinnerTitle(`${clc.green('[V]')} Processing Subdomains Resolving... %s`);
@@ -1386,6 +1521,38 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
 
     try {
         const domain = url;
+
+        // Run DNS Cache Snooping
+        spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With DNS Cache Snooping %s`);
+        spinner.start();
+        const DnscachereconSubdomains = await getSubdomainsFromDNSCache(domain);
+        spinner.stop(true);
+        console.log(`${clc.green('[V]')} Total subdomains from DNS Cache Snooping: ${clc.yellowBright(DnscachereconSubdomains.length)}`);
+        subdomains.push(...DnscachereconSubdomains);
+
+        // Run SSL
+        spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With SSL/TLS Certificates %s`);
+        spinner.start();
+        const SslreconSubdomains = await getSubdomainsFromCertificate(domain);
+        spinner.stop(true);
+        console.log(`${clc.green('[V]')} Total subdomains from SSL/TLS Certificates: ${clc.yellowBright(SslreconSubdomains.length)}`);
+        subdomains.push(...SslreconSubdomains);
+
+        // Run BGP Data Analysis
+        spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With BGP Data Analysis %s`);
+        spinner.start();
+        const BgpreconSubdomains = await getSubdomainsFromRipeData(domain);
+        spinner.stop(true);
+        console.log(`${clc.green('[V]')} Total subdomains from BGP Data Analysis: ${clc.yellowBright(BgpreconSubdomains.length)}`);
+        subdomains.push(...BgpreconSubdomains);        
+
+        // Run DNS Dumpster Diving
+        //spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With DNS Dumpster Diving %s`);
+        //spinner.start();
+        //const dnsDumpsterSubdomains = await getSubdomainsFromDnsDumpster(domain);
+        //spinner.stop(true);
+        //console.log(`${clc.green('[V]')} Total subdomains from DNS Dumpster Diving: ${clc.yellowBright(dnsDumpsterSubdomains.length)}`);
+        //subdomains.push(...dnsDumpsterSubdomains);
 
         // Run subquest
         spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With Subquest %s`);
