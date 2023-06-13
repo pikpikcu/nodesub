@@ -1481,7 +1481,7 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
         spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With SSL/TLS Certificates %s`);
         spinner.start();
         const SslreconSubdomains = await getSubdomainsFromCertificate(domain);
-        spinner.stop(true);agent
+        spinner.stop(true);
         console.log(`${clc.green('[V]')} Total subdomains from SSL/TLS Certificates: ${clc.yellowBright(SslreconSubdomains.length)}`);
         subdomains.push(...SslreconSubdomains);
 
