@@ -13,6 +13,7 @@ const subquest = require('subquest');
 const net = require('net');
 const forge = require('node-forge');
 const https = require('https');
+const http = require('http');
 const DnsSocket = require('dns-socket');
 const {
     promisify
@@ -20,7 +21,6 @@ const {
 const FormData = require('form-data');
 const resolve4 = promisify(dns.resolve4);
 const os = require('os');
-//const exec = util.promisify(require('child_process').exec);
 const {
     v4: uuidv4
 } = require('uuid');
@@ -44,7 +44,7 @@ const HttpProxyAgent = require('http-proxy-agent');
 const HttpsProxyAgent = require('https-proxy-agent');
 const SocksProxyAgent = require('socks-proxy-agent');
 
-const version = '0.1.1';
+const version = '0.1.2';
 const codename = 'pikpikcu';
 
 program
@@ -58,10 +58,10 @@ program
     .option('-ip, --ips', 'Ekstrak IPs in Subdomain Resolved')
     .option('-wl, --wildcard', 'Filter subdomains by wildcard DNS resolution Default:(False)')
     .option('-r, --recursive', 'Enable recursive subdomain enumeration')
-    .option('-p, --permutations', 'Enable subdomain permutations')
+    .option('-P, --permutations', 'Enable subdomain permutations')
     .option('-re,--resolver <file>', 'File with list of resolvers')
     .option('-w, --wordlist <file>', 'Wordlist file')
-    .option('-pr, --proxy <proxy>', 'Proxy URL')
+    .option('-p, --proxy <proxy>', 'Proxy URL')
     .option('-pa, --proxy-auth <username:password>', 'Proxy authentication credentials')
     .option('-s, --size <size>', 'Max old space size heap Default:(10048 MB)')
     .option('-d, --debug', 'Show DNS resolution details')
@@ -147,7 +147,6 @@ function delay(ms) {
 }
 
 // Function to create directory
- 
 function createDirectory(dirPath) {
     if (!fs.existsSync(dirPath)) {
         fs.mkdirSync(dirPath, {
@@ -157,10 +156,9 @@ function createDirectory(dirPath) {
 }
 
 // Function to read wordlist file
-
-function readWordlistFile(wordlistFile) {
+function readWordlistFile(wordlist) {
     try {
-        const data = fs.readFileSync(wordlistFile, 'utf8');
+        const data = fs.readFileSync(wordlist, 'utf8');
         const lines = data.split('\n').filter(Boolean); // Filter out empty lines
         return lines;
     } catch (error) {
@@ -219,75 +217,49 @@ async function downloadFile(url, filePath) {
     });
 }
 
-// createProxyAgent
-function createProxyAgent(proxyUrl, proxyAuth) {
-    const url = new URL(proxyUrl);
-    let agent;
-
-    if (url.protocol === 'http:' || url.protocol === 'https:') {
-        agent = new HttpProxyAgent({
-            protocol: url.protocol,
-            host: url.hostname,
-            port: url.port || (url.protocol === 'http:' ? 80 : 443),
-            auth: proxyAuth,
-        });
-    } else if (url.protocol === 'socks4:' || url.protocol === 'socks5:') {
-        agent = new SocksProxyAgent({
-            protocol: url.protocol.replace(':', ''),
-            host: url.hostname,
-            port: url.port || 1080,
-            auth: proxyAuth,
-        });
-    } else {
-        throw new Error('Invalid proxy URL');
-    }
-
+// Fungsi untuk membuat HttpsProxyAgent berdasarkan URL proxy
+function createProxyAgent(proxyUrl) {
+    const proxy = url.parse(proxyUrl);
+    const agent = new HttpsProxyAgent(proxy);
     return agent;
-}
-
-// Function to execute HTTP request with proxy
-async function executeRequest(domain) {
+  }
+  
+  // Fungsi untuk mengeksekusi permintaan HTTP dengan proxy
+  async function executeRequest(subdomain, proxy, agent) {
     try {
-        const url = `https://${domain}`;
-        const options = {};
-
-        if (argv.proxy) {
-            const proxyAuth = argv.proxyAuth || null;
-            const proxyUrl = new URL(argv.proxy);
-            const agentOptions = {
-                protocol: proxyUrl.protocol,
-                host: proxyUrl.hostname,
-                port: proxyUrl.port || (proxyUrl.protocol === 'http:' ? 80 : 443),
-                auth: proxyAuth,
-            };
-
-            if (proxyUrl.protocol === 'http:') {
-                options.httpAgent = new HttpProxyAgent(agentOptions);
-            } else if (proxyUrl.protocol === 'https:') {
-                options.httpsAgent = new HttpsProxyAgent(agentOptions);
-            } else if (proxyUrl.protocol === 'socks4:' || proxyUrl.protocol === 'socks5:') {
-                options.httpAgent = new SocksProxyAgent(agentOptions);
-                options.httpsAgent = new SocksProxyAgent(agentOptions);
-            } else {
-                throw new Error('Invalid proxy URL');
-            }
-        }
-
-        const response = await axios.get(url, options);
-        console.log(`Requests to domains: ${domain}`);
-        // Proses respons
-        if (argv.proxy) {
-            const proxyHost = new URL(argv.proxy).hostname;
-            const proxyPort = new URL(argv.proxy).port || (new URL(argv.proxy).protocol === 'http:' ? 80 : 443);
-            const subdomain = domain.replace(`.${proxyHost}`, '');
-            const proxyHistoryUrl = `http://${proxyHost}:${proxyPort}/subdomain/${subdomain}`;
-            await axios.get(proxyHistoryUrl);
-        }
+      const requestOptions = {
+        method: 'GET',
+        url: `https://${subdomain}`,
+        httpsAgent: agent,
+      };
+  
+      if (proxy) {
+        requestOptions.headers = { 'X-Custom-Proxy': proxy };
+      }
+  
+      const response = await axios(requestOptions);
+      console.log(`Requests to domain: ${subdomain}`);
+  
+      // Proses respons
+      if (proxy) {
+        const proxyHost = new url.URL(proxy).hostname;
+        const proxyPort = new url.URL(proxy).port || (new url.URL(proxy).protocol === 'http:' ? 80 : 443);
+        const subdomainWithoutProxy = subdomain.replace(`.${proxyHost}`, '');
+        const proxyHistoryUrl = `http://${proxyHost}:${proxyPort}/subdomain/${subdomainWithoutProxy}`;
+  
+        // Kirim permintaan GET ke URL proxyHistoryUrl menggunakan agent HTTP
+        const proxyAgent = new http.Agent({ keepAlive: true });
+        const proxyRequestOptions = {
+          method: 'GET',
+          url: proxyHistoryUrl,
+          agent: proxyAgent,
+        };
+        await axios(proxyRequestOptions);
+      }
     } catch (error) {
-        console.error(`${clc.red('\n[!]')} Failed execute HTTP request with proxy:`, error.response ? error.response.statusText : error.message);
+      console.error(`Failed to execute HTTP request with proxy: ${error.message}`);
     }
-}
-
+  }
 // Function to read API keys from config.ini file
 function readApiKeys() {
     const configPath = path.join(process.env.HOME, '.config', 'nodesub', 'config.ini');
@@ -860,49 +832,52 @@ async function rateLimitDNSRequests(subdomains) {
     return rateLimitedSubdomains;
 }
 
-// Function to perform recursive subdomain enumeration
-async function performRecursiveEnumeration(domain, wordlist) {
+// Function to perform recursive subdomain enumeration with a specified level of recursion
+async function performRecursiveEnumeration(domain, defaultWordlistContent, maxLevel) {
     const discoveredSubdomains = [];
     const resolvedSubdomains = [];
     const failedSubdomains = [];
 
     // Function to recursively enumerate subdomains
-    async function enumerateSubdomainsRecursive(subdomain, wordlist) {
-        const fullSubdomain = `${subdomain}.${domain}`;
-        const isActive = await resolveDomain(fullSubdomain);
+    async function enumerateSubdomainsRecursive(subdomain, defaultWordlistContent, currentLevel) {
+      if (currentLevel > maxLevel) return;
 
-        if (isActive) {
-            resolvedSubdomains.push({
-                subdomain: fullSubdomain,
-                isActive
-            });
-            discoveredSubdomains.push(fullSubdomain);
-        } else {
-            failedSubdomains.push({
-                subdomain: fullSubdomain,
-                isActive
-            });
-        }
+      const fullSubdomain = `${subdomain}.${domain}`;
+      const isActive = await resolveDomain(fullSubdomain);
 
-        // Recursive call to enumerate subdomains
-        for (const word of wordlist) {
-            const newSubdomain = `${word}.${subdomain}`;
-            await enumerateSubdomainsRecursive(newSubdomain, wordlist);
-        }
+      if (isActive) {
+        resolvedSubdomains.push({
+          subdomain: fullSubdomain,
+          isActive
+        });
+        discoveredSubdomains.push(fullSubdomain);
+      } else {
+        failedSubdomains.push({
+          subdomain: fullSubdomain,
+          isActive
+        });
+      }
+
+      // Recursive call to enumerate subdomains
+      for (const word of defaultWordlistContent) {
+        const newSubdomain = `${word}.${fullSubdomain}`;
+        await enumerateSubdomainsRecursive(newSubdomain, defaultWordlistContent, currentLevel + 1);
+      }
     }
 
     // Start the recursive enumeration
-    for (const word of wordlist) {
-        const subdomain = `${word}.${domain}`;
-        await enumerateSubdomainsRecursive(subdomain, wordlist);
+    for (const word of defaultWordlistContent) {
+      const subdomain = `${word}.${domain}`;
+      await enumerateSubdomainsRecursive(subdomain, defaultWordlistContent, 1);
     }
 
     return {
-        discoveredSubdomains,
-        resolvedSubdomains,
-        failedSubdomains
+      discoveredSubdomains,
+      resolvedSubdomains,
+      failedSubdomains
     };
 }
+
 
 // Function to perform subdomain brute force using wordlist with early exit
 async function bruteForceSubdomains(domain, wordlist) {
@@ -956,16 +931,14 @@ async function earlyExitCheck(subdomain, accuracy) {
     return true;
 }
 
-// Function to get subdomains from CIDR
-async function getSubdomainsFromCIDR(cidr) {
+async function getSubdomainsFromCIDR(cidr1) {
     try {
       const subdomains = [];
       // Perform subdomain enumeration using CIDR
       // Replace the following code with your own implementation to extract subdomains from CIDR
       // Example implementation using 'amass', 'mapcidr' command line tool
       const commands = [
-        `amass intel -cidr ${cidr}`,
-        `echo ${cidr} | mapcidr -silent | tlsx -cn -silent -nc | tr -d '[]' | awk '{print $2}'`,
+        `amass intel -cidr ${cidr1} ; echo ${cidr1} | mapcidr -silent | tlsx -cn -silent -nc | tr -d '[]' | awk '{print $2}'`
       ];
       const output = await Promise.all(commands.map(runCommand));
       output.forEach((cmdOutput) => {
@@ -977,25 +950,26 @@ async function getSubdomainsFromCIDR(cidr) {
           }
         });
       });
+      
   
       return subdomains;
     } catch (error) {
       console.error(`${clc.red('\n[!]')} Error getting subdomains from CIDR:`, error.response ? error.response.statusText : error.message);
       return [];
     }
-}
+  }
+  
 
 // Function to get subdomains from ASN using whois
-async function getSubdomainsFromASN(asn) {
+async function getSubdomainsFromASN(asn1) {
     try {
       const subdomains = [];
       // Perform subdomain enumeration using ASN
       // Replace the following code with your own implementation to extract subdomains from ASN
       // Example implementation using 'amass', 'asnmap', and 'whois' command line tools
       const commands = [
-        `amass intel -asn ${asn}`,
-        `asnmap -a ${asn} -silent | mapcidr -silent | tlsx -cn -silent -nc | tr -d '[]' | awk '{print $2}'`,
-        `whois -h whois.radb.net -- '-i origin ${asn}' | grep -Eo "([a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}"`,
+        `amass intel -asn ${asn1} ; asnmap -a ${asn1} -silent | mapcidr -silent | tlsx -cn -silent -nc | tr -d '[]' | awk '{print $2}'`,
+        `whois -h whois.radb.net -- '-i origin ${asn1}' | grep -Eo "([a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}"`
       ];
       const output = await Promise.all(commands.map(runCommand));
       output.forEach((cmdOutput) => {
@@ -1147,208 +1121,173 @@ async function getSubdomainsFromCertificate(domain) {
 async function resolveAndSaveSubdomains(domain, outputFile, subdomains) {
     spinner.setSpinnerTitle(`${clc.green('[V]')} Processing Subdomains Resolving... %s`);
     spinner.start();
-
+  
     let resolvedSubdomains = [];
     let failedSubdomains = [];
     let allSubdomains = [];
-
+  
     try {
-        const rateLimitedSubdomains = await rateLimitDNSRequests(subdomains); // Rate limit DNS requests
-        const result = await enumerateSubdomains(domain, subdomains, rateLimitedSubdomains); // Resolve subdomains
-        resolvedSubdomains = result.resolvedSubdomains;
-        failedSubdomains = result.failedSubdomains;
-        spinner.stop(true);
+      const rateLimitedSubdomains = await rateLimitDNSRequests(subdomains); // Rate limit DNS requests
+      const result = await enumerateSubdomains(domain, subdomains, rateLimitedSubdomains); // Resolve subdomains
+      resolvedSubdomains = result.resolvedSubdomains;
+      failedSubdomains = result.failedSubdomains;
+      spinner.stop(true);
     } catch (error) {
-        console.error(`${clc.red('\n[!]')} Error Resolving Subdomains:`, error.response ? error.response.statusText : error.message);
+      console.error(`${clc.red('\n[!]')} Error Resolving Subdomains:`, error.response ? error.response.statusText : error.message);
     }
-
+  
     spinner.stop(true);
-
+  
     // Print the number of subdomains found
     console.log(`${clc.green('[*]')} Resolved Subdomains: ${clc.yellowBright(Array.from(new Set(resolvedSubdomains)).length)}`);
     console.log(`${clc.red('[!]')} Failed Resolved Subdomains: ${clc.yellowBright(Array.from(new Set(failedSubdomains)).length)}`);
-
+  
     // Print subdomains if verbose flag is enabled
     if (argv.verbose) {
-        console.log(`${clc.green('[*]')} Resolved Subdomains:`);
-        const uniqueResolvedSubdomains = [...new Set(resolvedSubdomains.map(({
-            subdomain
-        }) => subdomain))];
-        console.log(uniqueResolvedSubdomains);
-
-        console.log(`${clc.red('[!]')} Failed Resolved Subdomains:`);
-        const uniqueFailedSubdomains = [...new Set(failedSubdomains.map(({
-            subdomain
-        }) => subdomain))];
-        console.log(uniqueFailedSubdomains);
+      console.log(`${clc.green('[*]')} Resolved Subdomains:`);
+      const uniqueResolvedSubdomains = [...new Set(resolvedSubdomains.map(({ subdomain }) => subdomain))];
+      console.log(uniqueResolvedSubdomains);
+  
+      console.log(`${clc.red('[!]')} Failed Resolved Subdomains:`);
+      const uniqueFailedSubdomains = [...new Set(failedSubdomains.map(({ subdomain }) => subdomain))];
+      console.log(uniqueFailedSubdomains);
     }
-
+  
     // Remove duplicates and sort subdomains
-    const uniqueResolvedSubdomains = Array.from(new Set(resolvedSubdomains.map(({
-        subdomain
-    }) => subdomain)));
-    const uniqueFailedSubdomains = Array.from(new Set(failedSubdomains.map(({
-        subdomain
-    }) => subdomain)));
+    const uniqueResolvedSubdomains = Array.from(new Set(resolvedSubdomains.map(({ subdomain }) => subdomain)));
+    const uniqueFailedSubdomains = Array.from(new Set(failedSubdomains.map(({ subdomain }) => subdomain)));
     const uniqueAllSubdomains = Array.from(new Set([...uniqueResolvedSubdomains, ...uniqueFailedSubdomains]));
-
+  
     uniqueResolvedSubdomains.sort();
     uniqueFailedSubdomains.sort();
     uniqueAllSubdomains.sort();
-
+  
     // Remove quotes from subdomains
     const cleanedResolvedSubdomains = uniqueResolvedSubdomains.map(subdomain => subdomain.replace(/"/g, ''));
     const cleanedFailedSubdomains = uniqueFailedSubdomains.map(subdomain => subdomain.replace(/"/g, ''));
     const cleanedAllSubdomains = uniqueAllSubdomains.map(subdomain => subdomain.replace(/"/g, ''));
-
+  
     // Save the results to an output file if provided
     if (outputFile) {
-        let resolvedOutputFile;
-        let failedOutputFile;
-        let allOutputFile;
-        let ipOutputFile;
-
-            // Generate output file names based on the input options
-        if (argv.cidr) {
-            resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_cidr.${getOutputFileExtension(argv.format)}`;
-            failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_cidr.${getOutputFileExtension(argv.format)}`;
-            allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_cidr.${getOutputFileExtension(argv.format)}`;
-            ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_cidr.${getOutputFileExtension(argv.format)}`; 
-        } else if (argv.asn) {
-            resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_asn.${getOutputFileExtension(argv.format)}`;
-            failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_asn.${getOutputFileExtension(argv.format)}`;
-            allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_asn.${getOutputFileExtension(argv.format)}`;
-            ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_asn.${getOutputFileExtension(argv.format)}`; 
-        } else {
-            resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_${domain}.${getOutputFileExtension(argv.format)}`;
-            failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_${domain}.${getOutputFileExtension(argv.format)}`;
-            allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_${domain}.${getOutputFileExtension(argv.format)}`;
-            ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_${domain}.${getOutputFileExtension(argv.format)}`; 
+      // Generate output file names based on the input options
+      let resolvedOutputFile, failedOutputFile, allOutputFile, ipOutputFile;
+  
+      if (argv.cidr) {
+        resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_cidr.${getOutputFileExtension(argv.format)}`;
+        failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_cidr.${getOutputFileExtension(argv.format)}`;
+        allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_cidr.${getOutputFileExtension(argv.format)}`;
+        ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_cidr.${getOutputFileExtension(argv.format)}`;
+      } else if (argv.asn) {
+        resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_asn.${getOutputFileExtension(argv.format)}`;
+        failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_asn.${getOutputFileExtension(argv.format)}`;
+        allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_asn.${getOutputFileExtension(argv.format)}`;
+        ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_asn.${getOutputFileExtension(argv.format)}`;
+      } else {
+        resolvedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_resolved_${domain}.${getOutputFileExtension(argv.format)}`;
+        failedOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_noresolved_${domain}.${getOutputFileExtension(argv.format)}`;
+        allOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_all_${domain}.${getOutputFileExtension(argv.format)}`;
+        ipOutputFile = `${outputFile.replace(/\.([^.]+)$/, '')}_ips_${domain}.${getOutputFileExtension(argv.format)}`;
+      }
+  
+      const resolvedOutputData = cleanedResolvedSubdomains.join('\n');
+      const failedOutputData = cleanedFailedSubdomains.join('\n');
+      const allOutputData = cleanedAllSubdomains.join('\n');
+      const ipOutputData = [];
+  
+      // Extract IPs for resolved subdomains
+      if (argv.ips) {
+        for (const subdomain of uniqueResolvedSubdomains) {
+          try {
+            const ipAddresses = await resolve4(subdomain);
+            ipOutputData.push(`${subdomain}: ${ipAddresses.join(', ')}`);
+          } catch (error) {
+            // Ignore DNS resolution errors and continue
+          }
         }
-        
-        const resolvedOutputData = cleanedResolvedSubdomains.join('\n');
-        const failedOutputData = cleanedFailedSubdomains.join('\n');
-        const allOutputData = cleanedAllSubdomains.join('\n');
-        const ipOutputData = []; 
-
-        // Extract IPs for resolved subdomains
-        if (argv.ips) {
-            for (const subdomain of uniqueResolvedSubdomains) {
-                try {
-                    const ipAddresses = await resolve4(subdomain);
-                    ipOutputData.push(`${subdomain}: ${ipAddresses.join(', ')}`);
-                } catch (error) {
-                    // Ignore DNS resolution errors and continue
-                }
-            }
-
-            // Save IP output to a file
-            if (ipOutputData.length > 0) {
-                fs.writeFileSync(ipOutputFile, ipOutputData.join('\n'), 'utf8');
-                console.log(`${clc.green('[v]')} IP addresses for resolved subdomains saved to: ${clc.yellowBright(ipOutputFile)}`);
-            }
+  
+        // Save IP output to a file
+        if (ipOutputData.length > 0) {
+          fs.writeFileSync(ipOutputFile, ipOutputData.join('\n'), 'utf8');
+          console.log(`${clc.green('[v]')} IP addresses for resolved subdomains saved to: ${clc.yellowBright(ipOutputFile)}`);
         }
-
-        if (argv.format === 'txt') {
-            fs.writeFileSync(resolvedOutputFile, resolvedOutputData, 'utf8');
-            fs.writeFileSync(failedOutputFile, failedOutputData, 'utf8');
-            fs.writeFileSync(allOutputFile, allOutputData, 'utf8');
-            console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
-            console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
-            console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
-        } else if (argv.format === 'json') {
-            const resolvedJsonData = JSON.stringify(cleanedResolvedSubdomains, null, 2);
-            const failedJsonData = JSON.stringify(cleanedFailedSubdomains, null, 2);
-            const allJsonData = JSON.stringify(cleanedAllSubdomains, null, 2);
-            fs.writeFileSync(resolvedOutputFile, resolvedJsonData, 'utf8');
-            fs.writeFileSync(failedOutputFile, failedJsonData, 'utf8');
-            fs.writeFileSync(allOutputFile, allJsonData, 'utf8');
-            console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
-            console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
-            console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
-        } else if (argv.format === 'csv') {
-            const resolvedCsvWriter = createObjectCsvWriter({
-                path: resolvedOutputFile,
-                header: [{
-                    id: 'subdomain',
-                    title: 'Subdomain'
-		  }],
-            });
-            const failedCsvWriter = createObjectCsvWriter({
-                path: failedOutputFile,
-                header: [{
-                    id: 'subdomain',
-                    title: 'Subdomain'
-		  }],
-            });
-            const allCsvWriter = createObjectCsvWriter({
-                path: allOutputFile,
-                header: [{
-                    id: 'subdomain',
-                    title: 'Subdomain'
-		  }],
-            });
-            await resolvedCsvWriter.writeRecords(cleanedResolvedSubdomains.map((subdomain) => ({
-                subdomain
-            })));
-            await failedCsvWriter.writeRecords(cleanedFailedSubdomains.map((subdomain) => ({
-                subdomain
-            })));
-            await allCsvWriter.writeRecords(cleanedAllSubdomains.map((subdomain) => ({
-                subdomain
-            })));
-            console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
-            console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
-            console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
-        } else if (argv.format === 'pdf') {
-            const PDFDocument = require('pdfkit');
-            const resolvedPdf = new PDFDocument();
-            const failedPdf = new PDFDocument();
-            const allPdf = new PDFDocument();
-
-            resolvedPdf.pipe(fs.createWriteStream(resolvedOutputFile));
-            failedPdf.pipe(fs.createWriteStream(failedOutputFile));
-            allPdf.pipe(fs.createWriteStream(allOutputFile));
-
-            resolvedPdf.font('Helvetica-Bold').text('Resolved Subdomains', {
-                fontSize: 24,
-                align: 'center'
-            });
-            resolvedPdf.moveDown();
-            resolvedPdf.font('Helvetica').fontSize(12).text(uniqueResolvedSubdomains.join('\n'), {
-                align: 'left'
-            });
-            resolvedPdf.end();
-
-            failedPdf.font('Helvetica-Bold').text('Failed Resolved Subdomains', {
-                fontSize: 24,
-                align: 'center'
-            });
-            failedPdf.moveDown();
-            failedPdf.font('Helvetica').fontSize(12).text(uniqueFailedSubdomains.join('\n'), {
-                align: 'left'
-            });
-            failedPdf.end();
-
-            allPdf.font('Helvetica-Bold').text('All Subdomains', {
-                fontSize: 24,
-                align: 'center'
-            });
-            allPdf.moveDown();
-            allPdf.font('Helvetica').fontSize(12).text(uniqueAllSubdomains.join('\n'), {
-                align: 'left'
-            });
-            allPdf.end();
-            console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
-            console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
-            console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
-        } else {
-            console.error(`${clc.red('[!]')} Invalid output file format`);
-        }
-    }
-
+      }
+  
+      if (argv.format === 'txt') {
+        fs.writeFileSync(resolvedOutputFile, resolvedOutputData, 'utf8');
+        fs.writeFileSync(failedOutputFile, failedOutputData, 'utf8');
+        fs.writeFileSync(allOutputFile, allOutputData, 'utf8');
+        console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
+        console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
+        console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
+      } else if (argv.format === 'json') {
+        const resolvedJsonData = JSON.stringify(cleanedResolvedSubdomains, null, 2);
+        const failedJsonData = JSON.stringify(cleanedFailedSubdomains, null, 2);
+        const allJsonData = JSON.stringify(cleanedAllSubdomains, null, 2);
+        fs.writeFileSync(resolvedOutputFile, resolvedJsonData, 'utf8');
+        fs.writeFileSync(failedOutputFile, failedJsonData, 'utf8');
+        fs.writeFileSync(allOutputFile, allJsonData, 'utf8');
+        console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
+        console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
+        console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
+      } else if (argv.format === 'csv') {
+        const resolvedCsvWriter = createObjectCsvWriter({
+          path: resolvedOutputFile,
+          header: [
+            { id: 'subdomain', title: 'Subdomain' }
+          ],
+        });
+        const failedCsvWriter = createObjectCsvWriter({
+          path: failedOutputFile,
+          header: [
+            { id: 'subdomain', title: 'Subdomain' }
+          ],
+        });
+        const allCsvWriter = createObjectCsvWriter({
+          path: allOutputFile,
+          header: [
+            { id: 'subdomain', title: 'Subdomain' }
+          ],
+        });
+        await resolvedCsvWriter.writeRecords(cleanedResolvedSubdomains.map(subdomain => ({ subdomain })));
+        await failedCsvWriter.writeRecords(cleanedFailedSubdomains.map(subdomain => ({ subdomain })));
+        await allCsvWriter.writeRecords(cleanedAllSubdomains.map(subdomain => ({ subdomain })));
+        console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
+        console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
+        console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
+      } else if (argv.format === 'pdf') {
+        const PDFDocument = require('pdfkit');
+        const resolvedPdf = new PDFDocument();
+        const failedPdf = new PDFDocument();
+        const allPdf = new PDFDocument();
+  
+        resolvedPdf.pipe(fs.createWriteStream(resolvedOutputFile));
+        failedPdf.pipe(fs.createWriteStream(failedOutputFile));
+        allPdf.pipe(fs.createWriteStream(allOutputFile));
+  
+        resolvedPdf.font('Helvetica-Bold').text('Resolved Subdomains', { fontSize: 24, align: 'center' });
+        resolvedPdf.moveDown();
+        resolvedPdf.font('Helvetica').fontSize(12).text(uniqueResolvedSubdomains.join('\n'), { align: 'left' });
+        resolvedPdf.end();
+  
+        failedPdf.font('Helvetica-Bold').text('Failed Resolved Subdomains', { fontSize: 24, align: 'center' });
+        failedPdf.moveDown();
+        failedPdf.font('Helvetica').fontSize(12).text(uniqueFailedSubdomains.join('\n'), { align: 'left' });
+        failedPdf.end();
+  
+        allPdf.font('Helvetica-Bold').text('All Subdomains', { fontSize: 24, align: 'center' });
+        allPdf.moveDown();
+        allPdf.font('Helvetica').fontSize(12).text(uniqueAllSubdomains.join('\n'), { align: 'left' });
+        allPdf.end();
+  
+        console.log(`${clc.green('[v]')} Resolved Subdomains saved to: ${clc.yellowBright(resolvedOutputFile)}`);
+        console.log(`${clc.red('[!]')} Failed Resolved Subdomains saved to: ${clc.yellowBright(failedOutputFile)}`);
+        console.log(`${clc.green('[*]')} All Subdomains saved to: ${clc.yellowBright(allOutputFile)}`);
+      } else {
+        console.error(`${clc.red('[!]')} Invalid output file format`);
+      }
+    }  
     return;
-}
+  }
 
 // Main
 async function main() {
@@ -1363,14 +1302,15 @@ async function main() {
             output,
             recursive,
             wordlist,
-            size
+            size,
+            cidr,
+            asn,
+            proxy,
+            proxyAuth
         } = argv;
 
         if (!fs.existsSync(configDirectory)) {
-            fs.mkdirSync(configDirectory, {
-                recursive: true
-            });
-
+            createDirectory(configDirectory);
             // Create a config.ini file with shodan="API_KEY"
             const configPath = path.join(configDirectory, 'config.ini');
             const shodanApiKey = 'API_KEY';
@@ -1383,7 +1323,7 @@ async function main() {
 
             // Download default_wordlists and save them in ~/.config/nodesub folder
             const wordlistUrls = [
-				'https://gist.githubusercontent.com/pikpikcu/679a73409a9b241aca11e7957cbb1630/raw/f87b5161d318bf1ff825cc57bd9102f9b99fc932/default_wordlist.txt',
+				'https://gist.githubusercontent.com/pikpikcu/679a73409a9b241aca11e7957cbb1630/raw/e2a0a9bb151c88d1ba60e8d4d3d1fa388468a948/default_wordlist.txt',
 				'https://raw.githubusercontent.com/blechschmidt/massdns/master/lists/resolvers.txt',
 			];
             const wordlistPaths = [
@@ -1422,45 +1362,52 @@ async function main() {
             }
         }
 
-        if (argv.cidr) {
-            const cidr = argv.cidr;
+        // Create proxy agent
+        let agent = null;
+        if (proxy && proxyAuth) {
+            const proxyAgent = createProxyAgent(proxy);        
+            await executeRequest(subdomain, proxy, proxyAgent);
+          }
+
+        if (cidr) {
+            const cidr1 = cidr;
             const outputFile = argv.output;
-            spinner.setSpinnerTitle(`${clc.green('[🔍]')} Start Processing Subdomain Enumerations from CIDR: ${clc.yellow(`[${cidr}]`)} %s`);
+            spinner.setSpinnerTitle(`${clc.green('[🔍]')} Start Processing Subdomain Enumerations from CIDR: ${clc.yellow(`[${cidr1}]`)} %s`);
             spinner.start();
           
             let subdomains = [];
-            if (fs.existsSync(cidr)) {
+            if (fs.existsSync(cidr1)) {
               // Read CIDR from file if the input is a file path
-              cidrfile = readSubdomainsFromFile(cidr);
+              cidrfile = readSubdomainsFromFile(cidr1);
               subdomains = await getSubdomainsFromCIDR(cidrfile);
             } else {
               // Otherwise, assume the input is a CIDR
-              subdomains = await getSubdomainsFromCIDR(cidr);
+              subdomains = await getSubdomainsFromCIDR(cidr1);
             }
           
             spinner.stop(true);
-            await resolveAndSaveSubdomains(cidr, outputFile, subdomains);
+            await resolveAndSaveSubdomains(cidr1, outputFile, subdomains);
             return;
           }
           
-        if (argv.asn) {
-            const asn = argv.asn;
+        if (asn) {
+            const asn1 = asn;
             const outputFile = argv.output;
-            spinner.setSpinnerTitle(`${clc.green('[🔍]')} Start Processing Subdomain Enumerations from ASN: ${clc.yellow(`[${asn}]`)} %s`);
+            spinner.setSpinnerTitle(`${clc.green('[🔍]')} Start Processing Subdomain Enumerations from ASN: ${clc.yellow(`[${asn1}]`)} %s`);
             spinner.start();
           
             let subdomains = [];
-            if (fs.existsSync(asn)) {
+            if (fs.existsSync(asn1)) {
               // Read ASN from file if the input is a file path
-              asnfile = readSubdomainsFromFile(asn);
-              subdomains = await getSubdomainsFromCIDR(asnfile);
+              asnfile = readSubdomainsFromFile(asn1);
+              subdomains = await getSubdomainsFromASN(asnfile);
             } else {
               // Otherwise, assume the input is an ASN
-              subdomains = await getSubdomainsFromASN(asn);
+              subdomains = await getSubdomainsFromASN(asn1);
             }
           
             spinner.stop(true);
-            await resolveAndSaveSubdomains(asn, outputFile, subdomains);
+            await resolveAndSaveSubdomains(asn1, outputFile, subdomains);
             return;
         }
 
@@ -1476,7 +1423,7 @@ async function main() {
 
         if (argv.url) {
             const outputFile = argv.output;
-            await processSubdomainEnumerations(url, outputFile, recursive, wordlist);
+            await processSubdomainEnumerations(url, outputFile, recursive, wordlist, agent);
         }
 
         if (size) {
@@ -1502,7 +1449,7 @@ async function main() {
 
             // Process subdomain enumerations for each URL in the list
             for (const line of lines) {
-                await processSubdomainEnumerations(line.trim(), output, recursive, wordlist);
+                await processSubdomainEnumerations(line.trim(), output, recursive, wordlist, agent);
             }
         }
     } catch (error) {
@@ -1521,7 +1468,7 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
 
     try {
         const domain = url;
-
+        
         // Run DNS Cache Snooping
         spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With DNS Cache Snooping %s`);
         spinner.start();
@@ -1534,7 +1481,7 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
         spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With SSL/TLS Certificates %s`);
         spinner.start();
         const SslreconSubdomains = await getSubdomainsFromCertificate(domain);
-        spinner.stop(true);
+        spinner.stop(true);agent
         console.log(`${clc.green('[V]')} Total subdomains from SSL/TLS Certificates: ${clc.yellowBright(SslreconSubdomains.length)}`);
         subdomains.push(...SslreconSubdomains);
 
@@ -1649,6 +1596,7 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
         console.log(`${clc.green('[V]')} Total subdomains from Subfinder: ${clc.yellowBright(subfinderSubdomains.length)}`);
         subdomains.push(...subfinderSubdomains);
 
+
         // Run permutations if enabled
         if (permutations) {
             spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Permutations %s`);
@@ -1677,35 +1625,41 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
             subdomains.push(...dnsreconSubdomains);
         }
 
+        if (recursive) {            
+            const homeDirectory = await getHomeDirectory();
+            const configDirectory = path.join(homeDirectory, '.config', 'nodesub');
+            const defaultWordlistPath = path.join(configDirectory, 'default_wordlist.txt');
+            const defaultWordlistContent = fs.readFileSync(defaultWordlistPath, 'utf8').split('\n');
+            spinner.setSpinnerTitle(`${clc.green('[🔍]')} Recursive enumeration enabled %s`);
+            spinner.start();
+            process.env.NODE_OPTIONS = '--max-old-space-size=1000192';
+            const recursiveSubdomains = await performRecursiveEnumeration(domain, defaultWordlistContent, 2);
+            spinner.stop(true);
+            subdomains.push(...recursiveSubdomains.discoveredSubdomains);
+            // If you want to push resolved and failed subdomains as well, uncomment the lines below:
+            // subdomains.push(...recursiveSubdomains.resolvedSubdomains.map(s => s.subdomain));
+            // subdomains.push(...recursiveSubdomains.failedSubdomains.map(s => s.subdomain));
+        }
+         
         // Run brute force if wordlist provided or using default wordlist for recursive
-        if (recursive || wordlist) {
+        if (wordlist) {
             spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Bruteforcing %s`);
             spinner.start();
-
-            let bruteForceSubs;
-            if (wordlist) {
-                const wordlistPath = path.resolve(wordlist);
-                const wordlistContent = fs.readFileSync(wordlistPath, 'utf8');
-                const wordlistArray = wordlistContent.split('\n').filter(Boolean);
-                console.log(`${clc.green('\n[*]')} Total file wordlist: ${clc.yellowBright(wordlistArray.length)}`);
-                bruteForceSubs = await bruteForceSubdomains(domain, wordlistArray);
-            } else {
-                const defaultWordlistPath = path.join(configDirectory, 'default_wordlist.txt');
-                const defaultWordlistContent = fs.readFileSync(defaultWordlistPath, 'utf8');
-                const defaultWordlistArray = defaultWordlistContent.split('\n').filter(Boolean);
-                console.log(`${clc.green('\n[*]')} Total default wordlist: ${clc.yellowBright(defaultWordlistArray.length)}`);
-                bruteForceSubs = await bruteForceSubdomains(domain, defaultWordlistArray);
-            }
-
+        
+            const wordlistArray = readWordlistFile(wordlist);
+            console.log(`${clc.green('\n[*]')} Total words in wordlist: ${clc.yellowBright(wordlistArray.length)}`);
+        
+            const bruteForceSubs = await bruteForceSubdomains(domain, wordlistArray);
+        
             spinner.stop(true);
             console.log(`${clc.green('[V]')} Total subdomains from Bruteforce: ${clc.yellowBright(bruteForceSubs.length)}`);
             subdomains.push(...bruteForceSubs);
         }
         await resolveAndSaveSubdomains(domain, outputFile, subdomains);
+        return [];
     } catch (error) {
         console.error(`${clc.red('\n[!]')} Error occurred while processing subdomain enumerations:`, error.response ? error.response.statusText : error.message);
     }
-
     spinner.stop(true);
 }
 
