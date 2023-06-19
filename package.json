@@ -33,7 +33,7 @@
     "fast-glob": "^3.2.12",
     "figlet": "^1.6.0",
     "form-data": "^4.0.0",
-    "fs": "0.0.1-security",
+    "fs": "0.0.2",
     "http-proxy-agent": "^5.0.0",
     "https-proxy-agent": "^5.0.0",
     "node-fetch": "^3.3.1",
