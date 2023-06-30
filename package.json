@@ -37,7 +37,7 @@
     "http-proxy-agent": "^5.0.0",
     "https-proxy-agent": "^5.0.0",
     "node-fetch": "^3.3.1",
-    "nodesub": "^0.0.9",
+    "nodesub": "^0.0.12",
     "path": "^0.12.7",
     "pdfkit": "^0.13.0",
     "socks-proxy-agent": "^5.0.0",
