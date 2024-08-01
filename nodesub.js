@@ -309,10 +309,10 @@ async function runDnsrecon(domain) {
         }
 
         const commands = [
-		`dnsrecon -d ${domain} -t zonewalk 2>&1`,
-		`dnsrecon -d ${domain} -k 2>&1`,
-		`dnsrecon -d ${domain} -y -k -b --lifetime 10 --threads 15 -w 2>&1`,
-	  ];
+                `dnsrecon -d ${domain} -t zonewalk 2>&1`,
+                `dnsrecon -d ${domain} -k 2>&1`,
+                `dnsrecon -d ${domain} -y -k -b --lifetime 10 --threads 15 -w 2>&1`,
+          ];
 
         const subdomains = [];
 
@@ -531,6 +531,7 @@ async function runBing(domain, first) {
         return uniqueSubdomains;
     } catch (error) {
         console.error(`${clc.red('\n[!]')} Error running Bing search:`, error.response ? error.response.statusText : error.message);
+        return [];
     }
 }
 
@@ -538,13 +539,13 @@ async function runBing(domain, first) {
 async function runCrtsh(domain) {
     try {
         const urls = [
-			`https://crt.sh/?q=%.${domain}`,
-			`https://crt.sh/?q=%.%.${domain}`,
-			`https://crt.sh/?q=%.%.%.${domain}`,
-			`https://crt.sh/?q=%.%.%.%.${domain}`,
-			`https://crt.sh/?q=%.%.%.%.%.${domain}`,
-			`https://crt.sh/?q=%.%.%.%.%.%.${domain}`,
-		];
+                        `https://crt.sh/?q=%.${domain}`,
+                        `https://crt.sh/?q=%.%.${domain}`,
+                        `https://crt.sh/?q=%.%.%.${domain}`,
+                        `https://crt.sh/?q=%.%.%.%.${domain}`,
+                        `https://crt.sh/?q=%.%.%.%.%.${domain}`,
+                        `https://crt.sh/?q=%.%.%.%.%.%.${domain}`,
+                ];
 
         const subdomains = [];
 
@@ -649,7 +650,7 @@ async function runAmass(domain) {
         const subdomains = output.join('\n').split('\n');
         return subdomains;
     } catch (error) {
-        console.error(`${clc.red('\n[!]')} Error running Amass:`, error);
+        console.error(`${clc.red('\n[!]')} Error running Amass:`, error.response ? error.response.statusText : error.message);
         return [];
     }
 }
@@ -689,13 +690,13 @@ async function generatePermutations(domain) {
             installAlteryx();
         }
         const commands = [
-		`echo "${domain}" | alterx`,
-		`echo "${domain}" | alterx -enrich -p '{{word}}.{{suffix}}'`,
-		`echo "${domain}" | alterx -enrich -p '{{word}}-{{year}}.{{suffix}}'`,
-		`echo "${domain}" | alterx -enrich`,
-		`echo "${domain}" | alterx -enrich -p '{{number}}.{{suffix}}'`,
-		`echo "${domain}" | alterx -enrich -p '{{number}}-{{word}}.{{suffix}}'`
-	  ];
+                `echo "${domain}" | alterx`,
+                `echo "${domain}" | alterx -enrich -p '{{word}}.{{suffix}}'`,
+                `echo "${domain}" | alterx -enrich -p '{{word}}-{{year}}.{{suffix}}'`,
+                `echo "${domain}" | alterx -enrich`,
+                `echo "${domain}" | alterx -enrich -p '{{number}}.{{suffix}}'`,
+                `echo "${domain}" | alterx -enrich -p '{{number}}-{{word}}.{{suffix}}'`
+          ];
 
         const output = await Promise.all(commands.map(runCommand));
         output.forEach(result => {
@@ -842,26 +843,30 @@ async function performRecursiveEnumeration(domain, defaultWordlistContent, maxLe
     async function enumerateSubdomainsRecursive(subdomain, defaultWordlistContent, currentLevel) {
       if (currentLevel > maxLevel) return;
 
-      const fullSubdomain = `${subdomain}.${domain}`;
-      const isActive = await resolveDomain(fullSubdomain);
+      try {
+          const fullSubdomain = `${subdomain}.${domain}`;
+          const isActive = await resolveDomain(fullSubdomain);
 
-      if (isActive) {
-        resolvedSubdomains.push({
-          subdomain: fullSubdomain,
-          isActive
-        });
-        discoveredSubdomains.push(fullSubdomain);
-      } else {
-        failedSubdomains.push({
-          subdomain: fullSubdomain,
-          isActive
-        });
-      }
+          if (isActive) {
+            resolvedSubdomains.push({
+              subdomain: fullSubdomain,
+              isActive
+            });
+            discoveredSubdomains.push(fullSubdomain);
+          } else {
+            failedSubdomains.push({
+              subdomain: fullSubdomain,
+              isActive
+            });
+          }
 
-      // Recursive call to enumerate subdomains
-      for (const word of defaultWordlistContent) {
-        const newSubdomain = `${word}.${fullSubdomain}`;
-        await enumerateSubdomainsRecursive(newSubdomain, defaultWordlistContent, currentLevel + 1);
+          // Recursive call to enumerate subdomains
+          for (const word of defaultWordlistContent) {
+            const newSubdomain = `${word}.${fullSubdomain}`;
+            await enumerateSubdomainsRecursive(newSubdomain, defaultWordlistContent, currentLevel + 1);
+          }
+      } catch (error) {
+        console.error(`${clc.red('\n[!]')} Error running performing recursive enumeration:`, error.response ? error.response.statusText : error.message);
       }
     }
 
@@ -877,6 +882,7 @@ async function performRecursiveEnumeration(domain, defaultWordlistContent, maxLe
       failedSubdomains
     };
 }
+
 
 
 // Function to perform subdomain brute force using wordlist with early exit
@@ -989,40 +995,50 @@ async function getSubdomainsFromASN(asn1) {
 }
 
 // Function to get subdomains using DNS Dumpster Diving technique
-//async function getSubdomainsFromDnsDumpster(domain) {
-//    const socket = new DnsSocket();
-//    const subdomains = [];
-//    const dnsTypes = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SRV'];
-//  
-//    await Promise.all(
-//      dnsTypes.map((type) => {
-//        return new Promise((resolve, reject) => {
-//          socket.query({ questions: [{ type, name: `${domain}` }] }, 53, '8.8.8.8', (err, res) => {
-//            if (err) {
-//              reject(err);
-//              return;
-//            }
-//  
-//            const answers = res.answers.filter(answer => answer.type === 'A');
-//  
-//            answers.forEach(answer => {
-//              const subdomain = answer.name.replace(`.${domain}`, '');
-//              subdomains.push(subdomain);
-//            });
-//  
-//            resolve(); // Resolve after all answers are processed
-//          });
-//  
-//          // Timeout for each DNS query
-//          setTimeout(() => {
-//            reject(new Error(`DNS query for type ${type} timed out`));
-//          }, 5000); // Adjust the timeout duration as needed
-//        });
-//      })
-//    );
-//  
-//    return subdomains;
-//}
+async function getSubdomainsFromDnsDumpster(domain) {
+    try {
+        const socket = new DnsSocket();
+        let foundSubdomain = null;
+        const dnsTypes = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SRV'];
+      
+        for (let i = 0; i < dnsTypes.length; i++) {
+            if (foundSubdomain) break; // Break the loop if we found a subdomain
+
+            const type = dnsTypes[i];
+            await new Promise((resolve, reject) => {
+                socket.query({ questions: [{ type, name: `${domain}` }] }, 53, '8.8.8.8', (err, res) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+            
+                    const answers = res.answers.filter(answer => answer.type === 'A');
+            
+                    answers.forEach(answer => {
+                        const subdomain = answer.name.replace(`.${domain}`, '');
+                        if (!foundSubdomain) {
+                            foundSubdomain = subdomain;
+                        }
+                    });
+            
+                    resolve();  //Resolve after all answers are processed
+                });
+
+                //Timeout for each DNS query
+                setTimeout(() => {
+                    reject(new Error(`DNS query for type ${type} timed out`));
+                }, 5000);  // Adjust the timeout duration as needed
+            }).catch(error => {
+                console.error(`${clc.red('\n[!]')} Error running DNS Dumpster:`, error.message);
+            });
+        }
+
+        return foundSubdomain ? [foundSubdomain] : []; // Return the found subdomain, if any, otherwise return an empty array
+    } catch (error) {
+        console.error(`${clc.red('\n[!]')} Error running DNS Dumpster:`, error.response ? error.response.statusText : error.message);
+        return [];
+    }
+}
 
 // Subdomains from DNS Cache Snooping
 async function getSubdomainsFromDNSCache(domain) {
@@ -1049,7 +1065,8 @@ async function getSubdomainsFromDNSCache(domain) {
   
       return subdomains;
     } catch (error) {
-      throw error;
+        console.error(`${clc.red('\n[!]')} Error running DNS Cache Snooping:`, error.response ? error.response.statusText : error.message);
+        return [];
     }
 }
 
@@ -1067,7 +1084,8 @@ async function getSubdomainsFromRipeData(domain) {
         return [];
       }
     } catch (error) {
-      throw error;
+        console.error(`${clc.red('\n[!]')} Error running BGP Data Analysis:`, error.response ? error.response.statusText : error.message);
+        return [];
     }
   }
 
@@ -1075,45 +1093,56 @@ async function getSubdomainsFromRipeData(domain) {
 async function getSubdomainsFromCertificateInfo(certificate) {
     const subdomains = [];
   
-    // Extract subdomains from the certificate information
-    const { extensions } = certificate;
-    if (extensions) {
-      extensions.forEach((extension) => {
-        if (extension.name === 'subjectAltName') {
-          const altNames = extension.altNames;
-          altNames.forEach((altName) => {
-            if (altName.type === 2) { // DNS type
-              subdomains.push(altName.value);
-            }
-          });
+    try {
+        // Extract subdomains from the certificate information
+        const { extensions } = certificate;
+        if (extensions) {
+            extensions.forEach((extension) => {
+                if (extension.name === 'subjectAltName') {
+                    const altNames = extension.altNames;
+                    altNames.forEach((altName) => {
+                        if (altName.type === 2) { // DNS type
+                            subdomains.push(altName.value);
+                        }
+                    });
+                }
+            });
         }
-      });
+    } catch (error) {
+        console.error(`${clc.red('\n[!]')} Error running SSL/TLS Certificates:`, error.response ? error.response.statusText : error.message);
+        // You can throw the error again if you want the error to be handled by the function that called getSubdomainsFromCertificateInfo
+        // throw error;
     }
   
     return subdomains;
 }
-  
+
 // Function to get subdomains from SSL/TLS certificates
 async function getSubdomainsFromCertificate(domain) {
     return new Promise((resolve, reject) => {
-      const options = {
-        host: domain,
-        port: 443,
-        method: 'GET',
-        rejectUnauthorized: false
-      };
-  
-      const req = https.request(options, (res) => {
-        const certificate = res.socket.getPeerCertificate();
-        const subdomains = getSubdomainsFromCertificateInfo(certificate);
-        resolve(subdomains);
-      });
-  
-      req.on('error', (error) => {
-        reject(error.response ? error.response.statusText : error.message);
-      });
-  
-      req.end();
+      try {
+        const options = {
+          host: domain,
+          port: 443,
+          method: 'GET',
+          rejectUnauthorized: false
+        };
+    
+        const req = https.request(options, (res) => {
+          const certificate = res.socket.getPeerCertificate();
+          const subdomains = getSubdomainsFromCertificateInfo(certificate);
+          resolve(subdomains);
+        });
+    
+        req.on('error', (error) => {
+          reject(error.response ? error.response.statusText : error.message);
+        });
+    
+        req.end();
+      } catch (error) {
+        console.error(`${clc.red('\n[!]')} Error running SSL/TLS Certificates:`, error.response ? error.response.statusText : error.message);
+        return [];
+      }
     });
 }
 
@@ -1316,20 +1345,20 @@ async function main() {
             const shodanApiKey = 'API_KEY';
             const securityTrailsApiKey = 'API_KEY';
             const configContent = [
-				`shodan="${shodanApiKey}"`,
-				`securitytrails="${securityTrailsApiKey}"`
-			];
+                                `shodan="${shodanApiKey}"`,
+                                `securitytrails="${securityTrailsApiKey}"`
+                        ];
             fs.writeFileSync(configPath, configContent.join('\n'));
 
             // Download default_wordlists and save them in ~/.config/nodesub folder
             const wordlistUrls = [
-				'https://gist.githubusercontent.com/pikpikcu/679a73409a9b241aca11e7957cbb1630/raw/e2a0a9bb151c88d1ba60e8d4d3d1fa388468a948/default_wordlist.txt',
-				'https://raw.githubusercontent.com/blechschmidt/massdns/master/lists/resolvers.txt',
-			];
+                                'https://gist.githubusercontent.com/pikpikcu/679a73409a9b241aca11e7957cbb1630/raw/e2a0a9bb151c88d1ba60e8d4d3d1fa388468a948/default_wordlist.txt',
+                                'https://raw.githubusercontent.com/blechschmidt/massdns/master/lists/resolvers.txt',
+                        ];
             const wordlistPaths = [
-				path.join(configDirectory, 'default_wordlist.txt'),
-				path.join(configDirectory, 'resolvers.txt')
-			];
+                                path.join(configDirectory, 'default_wordlist.txt'),
+                                path.join(configDirectory, 'resolvers.txt')
+                        ];
 
             await Promise.all(wordlistUrls.map(async (url, index) => {
                 await downloadFile(url, wordlistPaths[index]);
@@ -1468,7 +1497,7 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
 
     try {
         const domain = url;
-        
+        /*
         // Run DNS Cache Snooping
         spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With DNS Cache Snooping %s`);
         spinner.start();
@@ -1492,14 +1521,16 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
         spinner.stop(true);
         console.log(`${clc.green('[V]')} Total subdomains from BGP Data Analysis: ${clc.yellowBright(BgpreconSubdomains.length)}`);
         subdomains.push(...BgpreconSubdomains);        
-
+                */
         // Run DNS Dumpster Diving
-        //spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With DNS Dumpster Diving %s`);
-        //spinner.start();
-        //const dnsDumpsterSubdomains = await getSubdomainsFromDnsDumpster(domain);
-        //spinner.stop(true);
-        //console.log(`${clc.green('[V]')} Total subdomains from DNS Dumpster Diving: ${clc.yellowBright(dnsDumpsterSubdomains.length)}`);
-        //subdomains.push(...dnsDumpsterSubdomains);
+        /*
+        spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With DNS Dumpster Diving %s`);
+        spinner.start();
+        const dnsDumpsterSubdomains = await getSubdomainsFromDnsDumpster(domain);
+        spinner.stop(true);
+        console.log(`${clc.green('[V]')} Total subdomains from DNS Dumpster Diving: ${clc.yellowBright(dnsDumpsterSubdomains.length)}`);
+        subdomains.push(...dnsDumpsterSubdomains);
+        */
 
         // Run subquest
         spinner.setSpinnerTitle(`${clc.green('[🔍]')} Processing Subdomain Enumerations With Subquest %s`);
@@ -1595,7 +1626,6 @@ async function processSubdomainEnumerations(url, outputFile, recursive, wordlist
         spinner.stop(true);
         console.log(`${clc.green('[V]')} Total subdomains from Subfinder: ${clc.yellowBright(subfinderSubdomains.length)}`);
         subdomains.push(...subfinderSubdomains);
-
 
         // Run permutations if enabled
         if (permutations) {
