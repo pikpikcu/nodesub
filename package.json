@@ -28,7 +28,7 @@
     "cloudscraper": "^4.6.0",
     "commander": "^10.0.1",
     "csv-writer": "^1.6.0",
-    "dns": "^0.1.2",
+    "dns": "^0.2.2",
     "dns-zonefile": "^0.3.2",
     "fast-glob": "^3.2.12",
     "figlet": "^1.6.0",
